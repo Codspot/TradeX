@@ -1,4 +1,4 @@
-# TradeX Backend System API for MCD TradeX
+# TradeX API
 
 A comprehensive stock management system API for MCD TradeX platform, integrated with Smart API from Angel One. Handles real-time data streaming with enterprise-grade database architecture. Built with NestJS, TypeScript, and PostgreSQL.
 
