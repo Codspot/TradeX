@@ -4,7 +4,8 @@ import { Repository } from 'typeorm';
 import { Server } from '../entities/server.entity';
 import { WebSocket } from '../entities/websocket.entity';
 import { Instrument } from '../entities/instrument.entity';
-import { IMPORTANT_STOCKS } from '../../config/important-stocks';
+import { TimeIntervalEntity, TimeInterval } from '../entities/market-data-interval.entity';
+import { IMPORTANT_STOCKS, IStockData } from '../../config/important-stocks-enhanced';
 
 @Injectable()
 export class DatabaseSeederService implements OnModuleInit {
@@ -15,11 +16,14 @@ export class DatabaseSeederService implements OnModuleInit {
     private websocketRepository: Repository<WebSocket>,
     @InjectRepository(Instrument)
     private instrumentRepository: Repository<Instrument>,
+    @InjectRepository(TimeIntervalEntity)
+    private timeIntervalRepository: Repository<TimeIntervalEntity>,
   ) {}
 
   async onModuleInit() {
     await this.seedServers();
     await this.seedWebSockets();
+    await this.seedTimeIntervals();
     await this.seedInstruments();
   }
 
@@ -96,6 +100,107 @@ export class DatabaseSeederService implements OnModuleInit {
     }
   }
 
+  async seedTimeIntervals() {
+    // Check if time intervals already exist
+    const existingIntervals = await this.timeIntervalRepository.find();
+
+    if (existingIntervals.length > 0) {
+      console.log(`✅ Time intervals already exist (Count: ${existingIntervals.length})`);
+      return;
+    }
+
+    console.log('🔄 Starting time intervals seeding...');
+
+    const intervalData = [
+      {
+        interval: TimeInterval.ONE_MINUTE,
+        name: '1 Minute',
+        description: 'One minute timeframe for high-frequency trading',
+        durationMinutes: 1,
+        sortOrder: 1,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.FIVE_MINUTES,
+        name: '5 Minutes',
+        description: 'Five minute timeframe for short-term analysis',
+        durationMinutes: 5,
+        sortOrder: 2,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.FIFTEEN_MINUTES,
+        name: '15 Minutes',
+        description: 'Fifteen minute timeframe for intraday trading',
+        durationMinutes: 15,
+        sortOrder: 3,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.THIRTY_MINUTES,
+        name: '30 Minutes',
+        description: 'Thirty minute timeframe for intraday analysis',
+        durationMinutes: 30,
+        sortOrder: 4,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.ONE_HOUR,
+        name: '1 Hour',
+        description: 'One hour timeframe for swing trading',
+        durationMinutes: 60,
+        sortOrder: 5,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.FOUR_HOURS,
+        name: '4 Hours',
+        description: 'Four hour timeframe for medium-term analysis',
+        durationMinutes: 240,
+        sortOrder: 6,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.ONE_DAY,
+        name: '1 Day',
+        description: 'Daily timeframe for long-term analysis',
+        durationMinutes: 1440,
+        sortOrder: 7,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.ONE_WEEK,
+        name: '1 Week',
+        description: 'Weekly timeframe for long-term trends',
+        durationMinutes: 10080,
+        sortOrder: 8,
+        isActive: true,
+      },
+      {
+        interval: TimeInterval.ONE_MONTH,
+        name: '1 Month',
+        description: 'Monthly timeframe for very long-term analysis',
+        durationMinutes: 43200,
+        sortOrder: 9,
+        isActive: true,
+      },
+    ];
+
+    let successCount = 0;
+    for (const data of intervalData) {
+      try {
+        const timeInterval = this.timeIntervalRepository.create(data);
+        await this.timeIntervalRepository.save(timeInterval);
+        console.log(`✅ Time interval seeded: ${data.name} (${data.interval})`);
+        successCount++;
+      } catch (error) {
+        console.error(`❌ Failed to seed time interval ${data.name}:`, error.message);
+      }
+    }
+
+    console.log(`🎉 Time intervals seeding completed! Success: ${successCount}/${intervalData.length}`);
+  }
+
   async seedInstruments() {
     const serverUuid = 'a16b9201-b4fe-448b-b100-9c834f4474fc';
     
@@ -120,10 +225,10 @@ export class DatabaseSeederService implements OnModuleInit {
       return;
     }
 
-    console.log('🔄 Starting instrument seeding...');
+    console.log('🔄 Starting enhanced instrument seeding with trader-friendly data...');
     
-    // Get first 150 stocks from important stocks list
-    const stocksToSeed = IMPORTANT_STOCKS.slice(0, 150);
+    // Use all 150 stocks from enhanced list
+    const stocksToSeed: IStockData[] = IMPORTANT_STOCKS;
     let successCount = 0;
     let skipCount = 0;
     
@@ -149,15 +254,20 @@ export class DatabaseSeederService implements OnModuleInit {
           serverUuid: serverUuid,
           websocketUuid: websocket.uuid,
           instrumentToken: stock.instrumentToken,
-          exchangeToken: stock.exchangeToken || stock.instrumentToken, // Use exchangeToken if available, otherwise fallback to instrumentToken
+          exchangeToken: stock.exchangeToken || stock.instrumentToken,
           tradingSymbol: stock.symbol,
-          name: stock.symbol,
+          name: stock.name || stock.symbol, // Use enhanced name if available
           exchange: stock.exchange,
           instrumentType: stock.type as 'EQ' | 'FUT' | 'CE' | 'PE' | 'INDEX',
           segment: stock.segment,
-          tickSize: 0.05,
-          lotSize: 1,
-          isActive: true,
+          tickSize: stock.tickSize || 0.05, // Use enhanced tick size
+          lotSize: stock.lotSize || 1, // Use enhanced lot size
+          isActive: stock.isActive !== false, // Default to true unless explicitly false
+          // Additional enhanced fields
+          sector: stock.sector || 'UNKNOWN',
+          avgVolume: stock.avgVolume || 0,
+          marketCap: stock.marketCap || 0,
+          priority: stock.priority || (i + 1),
         };
 
         const instrument = this.instrumentRepository.create(instrumentData);
@@ -165,10 +275,10 @@ export class DatabaseSeederService implements OnModuleInit {
         successCount++;
         
         if (successCount % 10 === 0) {
-          console.log(`✅ Seeded ${successCount}/150 instruments (Skipped: ${skipCount})`);
+          console.log(`✅ Seeded ${successCount}/150 enhanced instruments (Skipped: ${skipCount})`);
         }
       } catch (error) {
-        console.error(`❌ Error seeding instrument ${stock.symbol}:`, error.message);
+        console.error(`❌ Error seeding enhanced instrument ${stock.symbol}:`, error.message);
         skipCount++;
       }
     }
@@ -184,12 +294,13 @@ export class DatabaseSeederService implements OnModuleInit {
           currentStocks: stockCount
         });
         
-        console.log(`✅ Updated ${websockets[i].websocketName} with ${stockCount} stocks`);
+        console.log(`✅ Updated ${websockets[i].websocketName} with ${stockCount} enhanced stocks`);
       }
     } catch (error) {
       console.error('❌ Error updating websocket counts:', error.message);
     }
     
-    console.log(`🎉 Instrument seeding completed! Success: ${successCount}, Skipped: ${skipCount}`);
+    console.log(`🎉 Enhanced instrument seeding completed! Success: ${successCount}, Skipped: ${skipCount}`);
+    console.log(`📊 Seeded stocks with comprehensive trader data including sectors, volumes, and market caps`);
   }
 }
