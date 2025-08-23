@@ -58,9 +58,9 @@ export class InstrumentRepository {
   /**
    * Find instrument by instrument token
    */
-  async findByInstrumentToken(instrumentToken: string): Promise<Instrument | null> {
+  async findByInstrumentToken(token: string): Promise<Instrument | null> {
     return await this.instrumentRepository.findOne({
-      where: { instrumentToken },
+      where: { token },
     });
   }
 
@@ -69,8 +69,8 @@ export class InstrumentRepository {
    */
   async findByServerUuid(serverUuid: string): Promise<Instrument[]> {
     return await this.instrumentRepository.find({
-      where: { serverUuid, isActive: true },
-      order: { tradingSymbol: 'ASC' },
+      where: { serverUuid },
+      order: { inputSymbol: 'ASC' },
     });
   }
 
@@ -79,8 +79,8 @@ export class InstrumentRepository {
    */
   async findByWebSocketUuid(websocketUuid: string): Promise<Instrument[]> {
     return await this.instrumentRepository.find({
-      where: { websocketUuid, isActive: true },
-      order: { tradingSymbol: 'ASC' },
+      where: { websocketUuid },
+      order: { inputSymbol: 'ASC' },
     });
   }
 
@@ -146,14 +146,13 @@ export class InstrumentRepository {
   }
 
   /**
-   * Search instruments by trading symbol
+   * Search instruments by input symbol
    */
   async searchByTradingSymbol(symbol: string, limit: number = 10): Promise<Instrument[]> {
     return await this.instrumentRepository
       .createQueryBuilder('instrument')
-      .where('instrument.tradingSymbol ILIKE :symbol', { symbol: `%${symbol}%` })
-      .andWhere('instrument.isActive = :isActive', { isActive: true })
-      .orderBy('instrument.tradingSymbol', 'ASC')
+      .where('instrument.inputSymbol ILIKE :symbol', { symbol: `%${symbol}%` })
+      .orderBy('instrument.inputSymbol', 'ASC')
       .limit(limit)
       .getMany();
   }
@@ -166,11 +165,9 @@ export class InstrumentRepository {
     const updatedInstrument = await this.instrumentRepository.findOne({
       where: { uuid }
     });
-    
     if (!updatedInstrument) {
       throw new Error('Failed to retrieve updated instrument');
     }
-    
     return updatedInstrument;
   }
 
@@ -201,26 +198,23 @@ export class InstrumentRepository {
 
     // Optional segment filter
     if (segment) {
-      queryBuilder.andWhere('instrument.segment = :segment', { segment });
+      queryBuilder.andWhere('instrument.series = :segment', { segment });
     }
 
     // Optional search filter (searches both symbol and name)
     if (search && search.trim().length > 0) {
       queryBuilder.andWhere(
-        '(instrument.tradingSymbol ILIKE :search OR instrument.name ILIKE :search)',
+        '(instrument.inputSymbol ILIKE :search OR instrument.name ILIKE :search)',
         { search: `%${search.trim()}%` }
       );
     }
-
-    // Default to active instruments only
-    queryBuilder.andWhere('instrument.isActive = :isActive', { isActive: true });
   }
 
   /**
    * Apply sorting to query builder
    */
   private applySorting(queryBuilder: SelectQueryBuilder<Instrument>, queryDto: GetInstrumentsQueryDto): void {
-    // Default sorting by trading symbol ascending
-    queryBuilder.orderBy('instrument.tradingSymbol', 'ASC');
+    // Default sorting by input symbol ascending
+    queryBuilder.orderBy('instrument.inputSymbol', 'ASC');
   }
 }

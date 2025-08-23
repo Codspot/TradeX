@@ -6,6 +6,9 @@ import { WebSocket } from '../entities/websocket.entity';
 import { Instrument } from '../entities/instrument.entity';
 import { TimeIntervalEntity, TimeInterval } from '../entities/market-data-interval.entity';
 import { IMPORTANT_STOCKS, IStockData } from '../../config/important-stocks-enhanced';
+// import { CandleSeederService } from './candle-seeder.service';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class DatabaseSeederService implements OnModuleInit {
@@ -18,6 +21,7 @@ export class DatabaseSeederService implements OnModuleInit {
     private instrumentRepository: Repository<Instrument>,
     @InjectRepository(TimeIntervalEntity)
     private timeIntervalRepository: Repository<TimeIntervalEntity>,
+    // private candleSeederService: CandleSeederService,
   ) {}
 
   async onModuleInit() {
@@ -25,6 +29,7 @@ export class DatabaseSeederService implements OnModuleInit {
     await this.seedWebSockets();
     await this.seedTimeIntervals();
     await this.seedInstruments();
+    // await this.candleSeederService.seedAllInstruments1wCandles();
   }
 
   async seedServers() {
@@ -215,92 +220,63 @@ export class DatabaseSeederService implements OnModuleInit {
       return;
     }
 
-    // Check if instruments already exist
-    const existingInstruments = await this.instrumentRepository.find({
-      where: { serverUuid }
-    });
+    // Read instruments from JSON
+    const jsonPath = path.join(process.cwd(), 'src/config/nifty150_instruments.json');
+    const raw = fs.readFileSync(jsonPath, 'utf-8');
+    const instruments = JSON.parse(raw);
 
-    if (existingInstruments.length >= 150) {
-      console.log(`✅ Instruments already exist for server: ${serverUuid} (Count: ${existingInstruments.length})`);
+    // Check if instruments already exist
+    const existing = await this.instrumentRepository.find({ where: { serverUuid } });
+
+    if (existing.length >= instruments.length) {
+      console.log(`✅ Instruments already exist for server: ${serverUuid} (Count: ${existing.length})`);
       return;
     }
 
-    console.log('🔄 Starting enhanced instrument seeding with trader-friendly data...');
-    
-    // Use all 150 stocks from enhanced list
-    const stocksToSeed: IStockData[] = IMPORTANT_STOCKS;
     let successCount = 0;
     let skipCount = 0;
-    
-    for (let i = 0; i < stocksToSeed.length; i++) {
-      const stock = stocksToSeed[i];
+
+    for (let i = 0; i < instruments.length; i++) {
+      const data = instruments[i];
       
-      try {
-        // Check if instrument already exists
-        const existingInstrument = await this.instrumentRepository.findOne({
-          where: { instrumentToken: stock.instrumentToken }
-        });
+      // Check if already exists by input_symbol and serverUuid
+      const exists = await this.instrumentRepository.findOne({
+        where: { inputSymbol: data.input_symbol, serverUuid }
+      });
 
-        if (existingInstrument) {
-          skipCount++;
-          continue;
-        }
-        
-        // Determine which websocket this stock belongs to (50 each)
-        const websocketIndex = Math.floor(i / 50);
-        const websocket = websockets[websocketIndex];
-        
-        const instrumentData = {
-          serverUuid: serverUuid,
-          websocketUuid: websocket.uuid,
-          instrumentToken: stock.instrumentToken,
-          exchangeToken: stock.exchangeToken || stock.instrumentToken,
-          tradingSymbol: stock.symbol,
-          name: stock.name || stock.symbol, // Use enhanced name if available
-          exchange: stock.exchange,
-          instrumentType: stock.type as 'EQ' | 'FUT' | 'CE' | 'PE' | 'INDEX',
-          segment: stock.segment,
-          tickSize: stock.tickSize || 0.05, // Use enhanced tick size
-          lotSize: stock.lotSize || 1, // Use enhanced lot size
-          isActive: stock.isActive !== false, // Default to true unless explicitly false
-          // Additional enhanced fields
-          sector: stock.sector || 'UNKNOWN',
-          avgVolume: stock.avgVolume || 0,
-          marketCap: stock.marketCap || 0,
-          priority: stock.priority || (i + 1),
-        };
-
-        const instrument = this.instrumentRepository.create(instrumentData);
-        await this.instrumentRepository.save(instrument);
-        successCount++;
-        
-        if (successCount % 10 === 0) {
-          console.log(`✅ Seeded ${successCount}/150 enhanced instruments (Skipped: ${skipCount})`);
-        }
-      } catch (error) {
-        console.error(`❌ Error seeding enhanced instrument ${stock.symbol}:`, error.message);
+      if (exists) {
         skipCount++;
+        continue;
+      }
+      
+      // Determine which websocket this stock belongs to (50 each)
+      const websocketIndex = Math.floor(i / 50);
+      const websocket = websockets[websocketIndex];
+      
+      const instrument = this.instrumentRepository.create({
+        serverUuid,
+        websocketUuid: websocket.uuid,
+        inputSymbol: data.input_symbol,
+        resolvedSymbol: data.resolved_symbol,
+        name: data.name,
+        exchange: data.exchange,
+        series: data.series,
+        symboltoken: data.symboltoken,
+        token: data.token,
+        lotsize: data.lotsize,
+        tickSize: data.tick_size,
+        expiry: data.expiry,
+        strike: data.strike,
+      });
+
+      await this.instrumentRepository.save(instrument);
+      successCount++;
+      
+      if (successCount % 10 === 0) {
+        console.log(`✅ Seeded ${successCount}/${instruments.length} instruments (Skipped: ${skipCount})`);
       }
     }
 
-    // Update websocket current stock counts
-    try {
-      for (let i = 0; i < websockets.length; i++) {
-        const startIndex = i * 50;
-        const endIndex = Math.min(startIndex + 50, stocksToSeed.length);
-        const stockCount = Math.min(50, endIndex - startIndex);
-        
-        await this.websocketRepository.update(websockets[i].uuid, {
-          currentStocks: stockCount
-        });
-        
-        console.log(`✅ Updated ${websockets[i].websocketName} with ${stockCount} enhanced stocks`);
-      }
-    } catch (error) {
-      console.error('❌ Error updating websocket counts:', error.message);
-    }
-    
-    console.log(`🎉 Enhanced instrument seeding completed! Success: ${successCount}, Skipped: ${skipCount}`);
-    console.log(`📊 Seeded stocks with comprehensive trader data including sectors, volumes, and market caps`);
+    console.log(`🎉 Instrument seeding completed! Success: ${successCount}, Skipped: ${skipCount}`);
   }
 }

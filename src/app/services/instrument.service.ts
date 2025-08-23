@@ -180,7 +180,7 @@ export class InstrumentService {
       
       const instruments = await this.instrumentRepository.findByWebSocketUuid(websocketUuid);
       
-      return instruments.map(instrument => instrument.instrumentToken);
+      return instruments.map(instrument => instrument.token);
     } catch (error) {
       this.logger.error(`Error fetching instrument tokens for websocket: ${websocketUuid}`, error.stack);
       throw error;
@@ -196,7 +196,7 @@ export class InstrumentService {
       
       const instruments = await this.instrumentRepository.findByWebSocketUuid(websocketUuid);
       
-      return instruments.map(instrument => instrument.exchangeToken);
+      return instruments.map(instrument => instrument.symboltoken ?? instrument.token);
     } catch (error) {
       this.logger.error(`Error fetching exchange tokens for websocket: ${websocketUuid}`, error.stack);
       throw error;
@@ -255,19 +255,19 @@ export class InstrumentService {
       uuid: instrument.uuid,
       serverUuid: instrument.serverUuid,
       websocketUuid: instrument.websocketUuid,
-      instrumentToken: instrument.instrumentToken,
-      exchangeToken: instrument.exchangeToken,
-      tradingSymbol: instrument.tradingSymbol,
+      instrumentToken: instrument.token,
+      exchangeToken: instrument.symboltoken ?? instrument.token,
+      tradingSymbol: instrument.inputSymbol,
       name: instrument.name,
       exchange: instrument.exchange,
-      expiryDate: instrument.expiryDate,
-      strikePrice: instrument.strikePrice,
-      tickSize: instrument.tickSize,
-      lotSize: instrument.lotSize,
-      instrumentType: instrument.instrumentType,
-      segment: instrument.segment,
-      lastPrice: instrument.lastPrice,
-      isActive: instrument.isActive,
+      expiryDate: instrument.expiry ? new Date(instrument.expiry) : undefined,
+      strikePrice: instrument.strike ? parseFloat(instrument.strike) : undefined,
+      tickSize: instrument.tickSize ? parseFloat(instrument.tickSize) : undefined,
+      lotSize: instrument.lotsize ? parseInt(instrument.lotsize, 10) : undefined,
+      instrumentType: instrument.series,
+      segment: instrument.series,
+      lastPrice: undefined, // Not available in entity
+      isActive: true, // Assume all are active unless you add a field
       createdAt: instrument.createdAt,
       updatedAt: instrument.updatedAt,
     };

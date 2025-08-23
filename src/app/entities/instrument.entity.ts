@@ -11,14 +11,11 @@ export class Instrument {
   @Column({ name: 'websocket_uuid' })
   websocketUuid: string;
 
-  @Column({ name: 'instrument_token', unique: true })
-  instrumentToken: string;
+  @Column({ name: 'input_symbol' })
+  inputSymbol: string;
 
-  @Column({ name: 'exchange_token' })
-  exchangeToken: string;
-
-  @Column({ name: 'trading_symbol' })
-  tradingSymbol: string;
+  @Column({ name: 'resolved_symbol' })
+  resolvedSymbol: string;
 
   @Column()
   name: string;
@@ -26,29 +23,26 @@ export class Instrument {
   @Column()
   exchange: string;
 
-  @Column({ name: 'expiry_date', type: 'date', nullable: true })
-  expiryDate: Date;
+  @Column()
+  series: string;
 
-  @Column({ name: 'strike_price', type: 'decimal', precision: 10, scale: 2, nullable: true })
-  strikePrice: number;
-
-  @Column({ name: 'tick_size', type: 'decimal', precision: 6, scale: 4, default: 0.05 })
-  tickSize: number;
-
-  @Column({ name: 'lot_size', default: 1 })
-  lotSize: number;
-
-  @Column({ name: 'instrument_type' })
-  instrumentType: 'EQ' | 'FUT' | 'CE' | 'PE' | 'INDEX';
+  @Column({ nullable: true })
+  symboltoken: string;
 
   @Column()
-  segment: string;
+  token: string;
 
-  @Column({ name: 'last_price', type: 'decimal', precision: 10, scale: 2, nullable: true })
-  lastPrice: number;
+  @Column()
+  lotsize: string;
 
-  @Column({ default: true })
-  isActive: boolean;
+  @Column({ name: 'tick_size' })
+  tickSize: string;
+
+  @Column({ name: 'expiry', nullable: true })
+  expiry: string;
+
+  @Column({ name: 'strike' })
+  strike: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
