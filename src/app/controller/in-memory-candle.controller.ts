@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Query, Logger, Body } from '@nestjs/common';
 import { InMemoryCandleService, InMemoryCandle } from '../services/in-memory-candle.service';
 
-@Controller('api/in-memory-candles')
+@Controller('in-memory-candles')
 export class InMemoryCandleController {
   private readonly logger = new Logger(InMemoryCandleController.name);
 
