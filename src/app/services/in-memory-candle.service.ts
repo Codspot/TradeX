@@ -57,7 +57,7 @@ export class InMemoryCandleService implements OnModuleInit {
   }
 
   /**
-   * Enhanced tick processing with FIXED open price behavior
+   * Enhanced tick processing with MARKET HOURS logic and proper open price handling
    */
   async processTick(tick: {
     token: string;
@@ -69,6 +69,62 @@ export class InMemoryCandleService implements OnModuleInit {
     // Convert timestamp to IST Date object
     const tickTime = this.createISTTimestamp();
     
+    // Check market status
+    const marketStatus = this.getMarketStatus(tickTime);
+    
+    // Log market status for debugging (only once per minute)
+    if (this.shouldLogMarketStatus(tickTime)) {
+      this.logger.log(`🕒 Market Status: ${marketStatus.status} - ${marketStatus.description}`);
+    }
+    
+    // Reject ticks if market is completely closed
+    if (!marketStatus.canProcessTicks) {
+      this.logger.debug(`❌ Rejecting tick for ${tick.token} - Market is ${marketStatus.status}`);
+      return;
+    }
+    
+    // Special handling for pre-market period (9:00-9:08 AM)
+    if (marketStatus.status === 'PRE_MARKET') {
+      await this.handlePreMarketTick(tick, tickTime);
+      return;
+    }
+    
+    // Special handling for price discovery period (9:08-9:15 AM)
+    if (marketStatus.status === 'PRICE_DISCOVERY') {
+      await this.handlePriceDiscoveryTick(tick, tickTime);
+      return;
+    }
+    
+    // Normal processing for ACTIVE_TRADING and POST_MARKET
+    await this.processNormalTick(tick, tickTime, marketStatus);
+  }
+
+  private lastMarketStatusLog = 0;
+  
+  /**
+   * Check if we should log market status (once per minute)
+   */
+  private shouldLogMarketStatus(time: Date): boolean {
+    const currentMinute = Math.floor(time.getTime() / (60 * 1000));
+    if (currentMinute !== this.lastMarketStatusLog) {
+      this.lastMarketStatusLog = currentMinute;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Handle pre-market ticks (9:00-9:08 AM) - Update open prices
+   */
+  private async handlePreMarketTick(tick: {
+    token: string;
+    name: string;
+    ltp: number;
+    volume: number;
+    timestamp: string | Date;
+  }, tickTime: Date): Promise<void> {
+    this.logger.debug(`📈 PRE-MARKET: Updating open prices for ${tick.token} @ ₹${tick.ltp}`);
+    
     for (const interval of this.intervals) {
       const candleStart = this.getCandleStartTime(tickTime, interval);
       const key = `${tick.token}-${interval}-${candleStart.getTime()}`;
@@ -76,8 +132,8 @@ export class InMemoryCandleService implements OnModuleInit {
       let candle = this.candleCache.get(key);
       
       if (candle) {
-        // 🔒 FIXED OPEN: Update existing candle but NEVER change the open price
-        // The open price was set when the candle was first created and must remain fixed
+        // 🔄 PRE-MARKET: Update open price during pre-market period
+        candle.open = tick.ltp;
         candle.high = Math.max(candle.high, tick.ltp);
         candle.low = Math.min(candle.low, tick.ltp);
         candle.close = tick.ltp;
@@ -85,10 +141,112 @@ export class InMemoryCandleService implements OnModuleInit {
         candle.tickCount++;
         candle.lastUpdated = this.createISTTimestamp();
         
-        // Special logging for token 2885 to see FIXED open behavior
+        this.logger.debug(`🔄 PRE-MARKET UPDATE: ${interval} candle for ${tick.token} - Open updated to ₹${candle.open}`);
+      } else {
+        // Create new candle for pre-market
+        candle = {
+          exchangeToken: tick.token,
+          symbol: tick.name || tick.token,
+          name: tick.name || '',
+          interval,
+          datetime: candleStart,
+          open: tick.ltp,  // PRE-MARKET: Set initial open price
+          high: tick.ltp,
+          low: tick.ltp,
+          close: tick.ltp,
+          volume: tick.volume || 0,
+          tickCount: 1,
+          lastUpdated: this.createISTTimestamp(),
+        };
+        
+        this.candleCache.set(key, candle);
+        this.logger.debug(`🆕 PRE-MARKET NEW: ${interval} candle for ${tick.token} - Open set to ₹${candle.open}`);
+      }
+    }
+  }
+
+  /**
+   * Handle price discovery ticks (9:08-9:15 AM) - Fixed open price, update H/L/C only
+   */
+  private async handlePriceDiscoveryTick(tick: {
+    token: string;
+    name: string;
+    ltp: number;
+    volume: number;
+    timestamp: string | Date;
+  }, tickTime: Date): Promise<void> {
+    this.logger.debug(`🔒 PRICE-DISCOVERY: Fixed open, updating H/L/C for ${tick.token} @ ₹${tick.ltp}`);
+    
+    for (const interval of this.intervals) {
+      const candleStart = this.getCandleStartTime(tickTime, interval);
+      const key = `${tick.token}-${interval}-${candleStart.getTime()}`;
+      
+      let candle = this.candleCache.get(key);
+      
+      if (candle) {
+        // 🔒 PRICE-DISCOVERY: Open price is FIXED (no changes), only update H/L/C/V
+        candle.high = Math.max(candle.high, tick.ltp);
+        candle.low = Math.min(candle.low, tick.ltp);
+        candle.close = tick.ltp;
+        candle.volume += tick.volume || 0;
+        candle.tickCount++;
+        candle.lastUpdated = this.createISTTimestamp();
+        
+        this.logger.debug(`🔒 PRICE-DISCOVERY UPDATE: ${interval} candle for ${tick.token} - Open FIXED at ₹${candle.open}, Close: ₹${candle.close}`);
+      } else {
+        // Create new candle for price discovery period (should rarely happen if pre-market worked)
+        // Use tick price as open if no pre-market candle exists
+        candle = {
+          exchangeToken: tick.token,
+          symbol: tick.name || tick.token,
+          name: tick.name || '',
+          interval,
+          datetime: candleStart,
+          open: tick.ltp,  // PRICE-DISCOVERY: Set open price (but will be fixed from now on)
+          high: tick.ltp,
+          low: tick.ltp,
+          close: tick.ltp,
+          volume: tick.volume || 0,
+          tickCount: 1,
+          lastUpdated: this.createISTTimestamp(),
+        };
+        
+        this.candleCache.set(key, candle);
+        this.logger.debug(`🆕 PRICE-DISCOVERY NEW: ${interval} candle for ${tick.token} - Open set and FIXED at ₹${candle.open}`);
+      }
+    }
+  }
+
+  /**
+   * Handle normal ticks (Active Trading & Post-Market)
+   */
+  private async processNormalTick(tick: {
+    token: string;
+    name: string;
+    ltp: number;
+    volume: number;
+    timestamp: string | Date;
+  }, tickTime: Date, marketStatus: any): Promise<void> {
+    
+    for (const interval of this.intervals) {
+      const candleStart = this.getCandleStartTime(tickTime, interval);
+      const key = `${tick.token}-${interval}-${candleStart.getTime()}`;
+      
+      let candle = this.candleCache.get(key);
+      
+      if (candle) {
+        // 🔒 FIXED OPEN: Update existing candle but NEVER change the open price during trading hours
+        candle.high = Math.max(candle.high, tick.ltp);
+        candle.low = Math.min(candle.low, tick.ltp);
+        candle.close = tick.ltp;
+        candle.volume += tick.volume || 0;
+        candle.tickCount++;
+        candle.lastUpdated = this.createISTTimestamp();
+        
+        // Special logging for debugging
         if (tick.token === '2885' && interval === '1m') {
-          console.log(`🔒 FIXED OPEN UPDATE - ${interval} candle for ${tick.name}:`);
-          console.log(`   Fixed Open: ${candle.open} (NEVER changes once set)`);
+          console.log(`🔒 ${marketStatus.status} UPDATE - ${interval} candle for ${tick.name}:`);
+          console.log(`   Fixed Open: ${candle.open} (NEVER changes during trading)`);
           console.log(`   Updated: H:${candle.high} L:${candle.low} C:${candle.close} (Tick: ${tick.ltp})`);
           console.log(`   Volume: ${candle.volume}, Ticks: ${candle.tickCount}`);
         }
@@ -113,7 +271,7 @@ export class InMemoryCandleService implements OnModuleInit {
           name: tick.name || '',
           interval,
           datetime: candleStart,
-          open: openPrice, // 🔒 FIXED: Open price is set once and never changes
+          open: openPrice, // 🔒 FIXED: Open price is set once and never changes during trading
           high: Math.max(openPrice, tick.ltp),
           low: Math.min(openPrice, tick.ltp),
           close: tick.ltp,
@@ -124,10 +282,10 @@ export class InMemoryCandleService implements OnModuleInit {
         
         this.candleCache.set(key, candle);
         
-        // Special logging for new candles with FIXED open
+        // Special logging for new candles
         if (tick.token === '2885' && interval === '1m') {
-          console.log(`🆕 NEW FIXED CANDLE - ${interval} for ${tick.name}:`);
-          console.log(`   Open: ${openPrice} (${previousClose ? 'from prev close' : 'from current tick'}) - WILL NEVER CHANGE`);
+          console.log(`🆕 NEW ${marketStatus.status} CANDLE - ${interval} for ${tick.name}:`);
+          console.log(`   Open: ${openPrice} (${previousClose ? 'from prev close' : 'from current tick'}) - FIXED during trading`);
           console.log(`   OHLC: O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close}`);
         }
       }
@@ -363,18 +521,69 @@ export class InMemoryCandleService implements OnModuleInit {
   }
 
   /**
-   * Check if market is closed (basic implementation)
+   * Enhanced market status checker with Indian market hours
    */
-  private isMarketClosed(time: Date): boolean {
+  private getMarketStatus(time: Date): {
+    status: 'PRE_MARKET' | 'PRICE_DISCOVERY' | 'ACTIVE_TRADING' | 'POST_MARKET' | 'CLOSED';
+    canProcessTicks: boolean;
+    canUpdateOpenPrices: boolean;
+    description: string;
+  } {
     const hour = time.getHours();
     const minute = time.getMinutes();
-    
-    // Indian market hours: 9:15 AM to 3:30 PM
-    const marketStart = 9 * 60 + 15; // 9:15 AM in minutes
-    const marketEnd = 15 * 60 + 30;   // 3:30 PM in minutes
     const currentTime = hour * 60 + minute;
     
-    return currentTime < marketStart || currentTime > marketEnd;
+    // Market time periods (in minutes from midnight)
+    const preMarketStart = 9 * 60;      // 9:00 AM - Start accepting ticks
+    const openPriceFixTime = 9 * 60 + 8; // 9:08 AM - Fix open prices
+    const activeStart = 9 * 60 + 15;    // 9:15 AM - Active trading
+    const activeEnd = 15 * 60 + 30;     // 3:30 PM - Market close
+    const postMarketEnd = 17 * 60;      // 5:00 PM - Post-market end
+    
+    if (currentTime >= preMarketStart && currentTime < openPriceFixTime) {
+      return {
+        status: 'PRE_MARKET',
+        canProcessTicks: true,
+        canUpdateOpenPrices: true,
+        description: 'Pre-market: 9:00-9:07 AM - Opening price fluctuation period'
+      };
+    } else if (currentTime >= openPriceFixTime && currentTime < activeStart) {
+      return {
+        status: 'PRICE_DISCOVERY',
+        canProcessTicks: true,
+        canUpdateOpenPrices: false,
+        description: 'Price discovery: 9:08-9:15 AM - Fixed open, update H/L/C only'
+      };
+    } else if (currentTime >= activeStart && currentTime <= activeEnd) {
+      return {
+        status: 'ACTIVE_TRADING',
+        canProcessTicks: true,
+        canUpdateOpenPrices: false,
+        description: 'Active trading: 9:15 AM-3:30 PM - Normal tick processing'
+      };
+    } else if (currentTime > activeEnd && currentTime <= postMarketEnd) {
+      return {
+        status: 'POST_MARKET',
+        canProcessTicks: true,
+        canUpdateOpenPrices: false,
+        description: 'Post-market: 3:30-5:00 PM - Limited processing'
+      };
+    } else {
+      return {
+        status: 'CLOSED',
+        canProcessTicks: false,
+        canUpdateOpenPrices: false,
+        description: 'Market closed: After 5:00 PM and before 9:00 AM'
+      };
+    }
+  }
+
+  /**
+   * Check if market is closed (legacy method for compatibility)
+   */
+  private isMarketClosed(time: Date): boolean {
+    const marketStatus = this.getMarketStatus(time);
+    return marketStatus.status === 'CLOSED';
   }
 
   /**
@@ -589,5 +798,102 @@ export class InMemoryCandleService implements OnModuleInit {
       intervalDistribution,
       mostActiveTokens,
     };
+  }
+
+  /**
+   * Get current market status (for API endpoints)
+   */
+  getCurrentMarketStatus(): {
+    status: string;
+    canProcessTicks: boolean;
+    canUpdateOpenPrices: boolean;
+    description: string;
+    currentTime: string;
+    nextMarketEvent: string;
+  } {
+    const now = this.createISTTimestamp();
+    const marketStatus = this.getMarketStatus(now);
+    
+    // Calculate next market event
+    let nextEvent = '';
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const currentTime = hour * 60 + minute;
+    
+    if (currentTime < 9 * 60) {
+      nextEvent = 'Pre-market opens at 9:00 AM';
+    } else if (currentTime < 9 * 60 + 8) {
+      nextEvent = 'Active trading starts at 9:15 AM';
+    } else if (currentTime < 9 * 60 + 15) {
+      nextEvent = 'Active trading starts at 9:15 AM';
+    } else if (currentTime < 15 * 60 + 30) {
+      nextEvent = 'Market closes at 3:30 PM';
+    } else if (currentTime < 17 * 60) {
+      nextEvent = 'Post-market closes at 5:00 PM';
+    } else {
+      nextEvent = 'Pre-market opens tomorrow at 9:00 AM';
+    }
+    
+    return {
+      ...marketStatus,
+      currentTime: now.toISOString(),
+      nextMarketEvent: nextEvent
+    };
+  }
+
+  /**
+   * Daily market opening routine - Reset and prepare for new trading day
+   */
+  async initializeDailyMarket(): Promise<void> {
+    const now = this.createISTTimestamp();
+    this.logger.log(`🏪 DAILY MARKET INITIALIZATION - ${now.toDateString()}`);
+    
+    // Get market status
+    const marketStatus = this.getMarketStatus(now);
+    
+    if (marketStatus.status === 'PRE_MARKET') {
+      this.logger.log(`📅 Pre-market period active - Ready for open price adjustments`);
+      
+      // Log statistics for yesterday's candles before cleanup
+      const stats = this.getCacheStats();
+      this.logger.log(`📊 Previous day candles in memory: ${stats.totalCandles}`);
+      
+      // Optionally: Clear very old candles or completed candles from previous days
+      await this.cleanupPreviousDayCandles();
+      
+      this.logger.log(`✅ Daily market initialization complete - Ready for trading`);
+    } else {
+      this.logger.warn(`⚠️ Daily initialization called outside pre-market hours: ${marketStatus.status}`);
+    }
+  }
+
+  /**
+   * Cleanup candles from previous trading days
+   */
+  private async cleanupPreviousDayCandles(): Promise<void> {
+    const now = this.createISTTimestamp();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(23, 59, 59, 999);
+    
+    let cleanedCount = 0;
+    const candlesToRemove: string[] = [];
+    
+    // Find candles older than yesterday
+    for (const [key, candle] of this.candleCache.entries()) {
+      if (candle.datetime < yesterday) {
+        candlesToRemove.push(key);
+      }
+    }
+    
+    // Remove old candles from cache
+    for (const key of candlesToRemove) {
+      this.candleCache.delete(key);
+      cleanedCount++;
+    }
+    
+    if (cleanedCount > 0) {
+      this.logger.log(`🗑️ Cleaned up ${cleanedCount} candles from previous trading days`);
+    }
   }
 }

@@ -353,4 +353,41 @@ export class InMemoryCandleController {
       };
     }
   }
+
+  /**
+   * Get current market status
+   */
+  @Get('market-status')
+  getMarketStatus() {
+    const marketStatus = this.inMemoryCandleService.getCurrentMarketStatus();
+    
+    return {
+      success: true,
+      data: marketStatus,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Initialize daily market (manual trigger)
+   */
+  @Post('initialize-daily')
+  async initializeDailyMarket() {
+    try {
+      await this.inMemoryCandleService.initializeDailyMarket();
+      
+      return {
+        success: true,
+        message: 'Daily market initialization completed',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Daily market initialization failed:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 }
