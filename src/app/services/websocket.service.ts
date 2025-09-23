@@ -61,8 +61,8 @@ export class WebSocketService {
       istTimestamp = new Date();
     }
     
-    // Ensure we're working with IST timezone (UTC+5:30)
-    const istTime = new Date(istTimestamp.getTime() + (5.5 * 60 * 60 * 1000)); // Add 5.5 hours to UTC
+    // Since server is already in IST timezone, use the timestamp directly
+    const istTime = istTimestamp;
     
     return {
       token: smartApiTick.token,

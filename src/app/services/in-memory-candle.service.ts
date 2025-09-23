@@ -151,7 +151,7 @@ export class InMemoryCandleService implements OnModuleInit {
           interval,
           datetime: candleStart,
           open: tick.ltp,  // PRE-MARKET: Set initial open price
-          high: tick.ltp,
+          high: 0,         // 🔥 PRE-MARKET: Set high as ZERO initially
           low: tick.ltp,
           close: tick.ltp,
           volume: tick.volume || 0,
@@ -203,7 +203,7 @@ export class InMemoryCandleService implements OnModuleInit {
           interval,
           datetime: candleStart,
           open: tick.ltp,  // PRICE-DISCOVERY: Set open price (but will be fixed from now on)
-          high: tick.ltp,
+          high: tick.ltp,  // 🔥 PRICE-DISCOVERY: Set high = open (same as open price)
           low: tick.ltp,
           close: tick.ltp,
           volume: tick.volume || 0,
@@ -243,8 +243,8 @@ export class InMemoryCandleService implements OnModuleInit {
         candle.tickCount++;
         candle.lastUpdated = this.createISTTimestamp();
         
-        // Special logging for debugging
-        if (tick.token === '2885' && interval === '1m') {
+        // Special logging for debugging (1m and 10m intervals)
+        if (tick.token === '2885' && (interval === '1m' || interval === '10m')) {
           console.log(`🔒 ${marketStatus.status} UPDATE - ${interval} candle for ${tick.name}:`);
           console.log(`   Fixed Open: ${candle.open} (NEVER changes during trading)`);
           console.log(`   Updated: H:${candle.high} L:${candle.low} C:${candle.close} (Tick: ${tick.ltp})`);
@@ -282,11 +282,16 @@ export class InMemoryCandleService implements OnModuleInit {
         
         this.candleCache.set(key, candle);
         
-        // Special logging for new candles
-        if (tick.token === '2885' && interval === '1m') {
+        // Special logging for new candles (1m and 10m intervals)
+        if (tick.token === '2885' && (interval === '1m' || interval === '10m')) {
           console.log(`🆕 NEW ${marketStatus.status} CANDLE - ${interval} for ${tick.name}:`);
           console.log(`   Open: ${openPrice} (${previousClose ? 'from prev close' : 'from current tick'}) - FIXED during trading`);
           console.log(`   OHLC: O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close}`);
+          
+          // Extra debugging for 10m interval
+          if (interval === '10m') {
+            console.log(`   🔍 10m DEBUG: CandleStart=${candleStart.toISOString()}, PrevClose=${previousClose}`);
+          }
         }
       }
     }

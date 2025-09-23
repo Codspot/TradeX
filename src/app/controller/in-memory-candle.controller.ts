@@ -98,28 +98,50 @@ export class InMemoryCandleController {
   }
 
   /**
-   * Helper method to calculate interval end time
+   * Get 10m interval candles specifically
    */
-  private getIntervalEndTime(startTime: Date, interval: string): Date {
-    const endTime = new Date(startTime);
-    
-    switch (interval) {
-      case '1m': endTime.setMinutes(endTime.getMinutes() + 1); break;
-      case '3m': endTime.setMinutes(endTime.getMinutes() + 3); break;
-      case '5m': endTime.setMinutes(endTime.getMinutes() + 5); break;
-      case '10m': endTime.setMinutes(endTime.getMinutes() + 10); break;
-      case '15m': endTime.setMinutes(endTime.getMinutes() + 15); break;
-      case '30m': endTime.setMinutes(endTime.getMinutes() + 30); break;
-      case '1h': endTime.setHours(endTime.getHours() + 1); break;
-      case '2h': endTime.setHours(endTime.getHours() + 2); break;
-      case '4h': endTime.setHours(endTime.getHours() + 4); break;
-      case '1d': endTime.setDate(endTime.getDate() + 1); break;
-      case '7d': endTime.setDate(endTime.getDate() + 7); break;
-      case '1M': endTime.setMonth(endTime.getMonth() + 1); break;
-      default: endTime.setMinutes(endTime.getMinutes() + 1);
+  @Get('candles-10m')
+  get10MinuteCandles(@Query('token') token?: string) {
+    const allCandles = this.inMemoryCandleService.getAllCandlesInMemory();
+    let tenMinCandles = allCandles.filter(c => c.interval === '10m');
+
+    if (token) {
+      tenMinCandles = tenMinCandles.filter(c => c.exchangeToken === token);
     }
-    
-    return endTime;
+
+    // Sort by datetime (newest first)
+    tenMinCandles.sort((a, b) => b.datetime.getTime() - a.datetime.getTime());
+
+    // Additional analysis for open price issues
+    const openPriceAnalysis = tenMinCandles.map(candle => {
+      // Check if open price looks suspicious
+      const suspiciousOpen = candle.open === 0 || candle.open > candle.high || candle.open < candle.low;
+      
+      return {
+        ...candle,
+        analysis: {
+          suspiciousOpen,
+          isValidOHLC: candle.open <= candle.high && candle.open >= candle.low && 
+                      candle.close <= candle.high && candle.close >= candle.low,
+          openVsHigh: candle.open === candle.high ? 'SAME' : (candle.open > candle.high ? 'INVALID' : 'OK'),
+          openVsLow: candle.open === candle.low ? 'SAME' : (candle.open < candle.low ? 'INVALID' : 'OK'),
+        }
+      };
+    });
+
+    return {
+      success: true,
+      data: {
+        total10mCandles: tenMinCandles.length,
+        candles: openPriceAnalysis,
+        summary: {
+          withSuspiciousOpen: openPriceAnalysis.filter(c => c.analysis.suspiciousOpen).length,
+          withValidOHLC: openPriceAnalysis.filter(c => c.analysis.isValidOHLC).length,
+        }
+      },
+      filters: { token, interval: '10m' },
+      timestamp: new Date().toISOString(),
+    };
   }
 
   /**
@@ -389,5 +411,30 @@ export class InMemoryCandleController {
         timestamp: new Date().toISOString(),
       };
     }
+  }
+
+  /**
+   * Helper method to calculate interval end time
+   */
+  private getIntervalEndTime(startTime: Date, interval: string): Date {
+    const endTime = new Date(startTime);
+    
+    switch (interval) {
+      case '1m': endTime.setMinutes(endTime.getMinutes() + 1); break;
+      case '3m': endTime.setMinutes(endTime.getMinutes() + 3); break;
+      case '5m': endTime.setMinutes(endTime.getMinutes() + 5); break;
+      case '10m': endTime.setMinutes(endTime.getMinutes() + 10); break;
+      case '15m': endTime.setMinutes(endTime.getMinutes() + 15); break;
+      case '30m': endTime.setMinutes(endTime.getMinutes() + 30); break;
+      case '1h': endTime.setHours(endTime.getHours() + 1); break;
+      case '2h': endTime.setHours(endTime.getHours() + 2); break;
+      case '4h': endTime.setHours(endTime.getHours() + 4); break;
+      case '1d': endTime.setDate(endTime.getDate() + 1); break;
+      case '7d': endTime.setDate(endTime.getDate() + 7); break;
+      case '1M': endTime.setMonth(endTime.getMonth() + 1); break;
+      default: endTime.setMinutes(endTime.getMinutes() + 1);
+    }
+    
+    return endTime;
   }
 }
