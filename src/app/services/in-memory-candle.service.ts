@@ -33,11 +33,18 @@ export class InMemoryCandleService implements OnModuleInit {
 
   /**
    * Create IST timestamp (Indian Standard Time - UTC+5:30)
+   * UNIVERSAL: Works regardless of server timezone - always returns IST time
    */
   private createISTTimestamp(): Date {
+    // Get current UTC time
     const now = new Date();
-    // Add 5.5 hours (5 hours 30 minutes) to UTC to get IST
-    return new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    
+    // Convert to IST (UTC+5:30) regardless of server timezone
+    const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
+    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000); // Convert to UTC
+    const istTime = new Date(utcTime + istOffset); // Add IST offset
+    
+    return istTime;
   }
 
   constructor(

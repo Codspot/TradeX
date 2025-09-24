@@ -12,7 +12,7 @@ export class WebSocketService {
   constructor(
     @InjectRepository(WebSocket)
     private websocketRepository: Repository<WebSocket>,
-    private readonly inMemoryCandleService: InMemoryCandleService, // Use in-memory service
+    private readonly inMemoryCandleService: InMemoryCandleService,
   ) {}
 
   /**
@@ -20,7 +20,6 @@ export class WebSocketService {
    */
   async processLtpData(websocketUuid: string, ltpData: LtpDataDto): Promise<{ ticksCount: number }> {
     try {
-      
       // Verify websocket exists
       const websocket = await this.websocketRepository.findOne({
         where: { uuid: websocketUuid }
@@ -38,7 +37,7 @@ export class WebSocketService {
       // Update websocket last activity timestamp
       await this.updateWebSocketActivity(websocketUuid);
 
-      return { ticksCount: 1 }; // Single tick processed
+      return { ticksCount: 1 };
     } catch (error) {
       this.logger.error(`Error processing LTP data for websocket: ${websocketUuid}`, error.stack);
       throw error;
@@ -58,18 +57,15 @@ export class WebSocketService {
       istTimestamp = new Date(exchangeTimestamp);
     } else {
       // Fallback to current time in IST
-      istTimestamp = new Date();
+      istTimestamp = this.createISTTimestamp();
     }
-    
-    // Since server is already in IST timezone, use the timestamp directly
-    const istTime = istTimestamp;
     
     return {
       token: smartApiTick.token,
-      name: smartApiTick.tradingsymbol || smartApiTick.name || '', // Add name for clarity
+      name: smartApiTick.tradingsymbol || smartApiTick.name || '',
       exchange_type: smartApiTick.exchange_type,
-      ltp: smartApiTick.last_traded_price / 100, // Convert paise to rupees
-      ltp_paise: smartApiTick.last_traded_price, // Keep original paise value
+      ltp: smartApiTick.last_traded_price / 100,
+      ltp_paise: smartApiTick.last_traded_price,
       ltq: smartApiTick.last_traded_quantity,
       volume: smartApiTick.volume_trade_for_the_day,
       atp: smartApiTick.average_traded_price ? smartApiTick.average_traded_price / 100 : null,
@@ -82,7 +78,7 @@ export class WebSocketService {
       exchange_timestamp: exchangeTimestamp,
       sequence_number: smartApiTick.sequence_number,
       subscription_mode: smartApiTick.subscription_mode_val,
-      timestamp: istTime.toISOString(), // Use IST timestamp for candle processing
+      timestamp: istTimestamp.toISOString(),
     };
   }
 
@@ -90,10 +86,7 @@ export class WebSocketService {
    * Handle individual LTP tick
    */
   private async handleLtpTick(websocketUuid: string, tick: any): Promise<void> {
-
-    // Log with name and token for clarity
-    
-    // Process tick with in-memory service (much faster)
+    // Process tick with in-memory service
     await this.inMemoryCandleService.processTick({
       token: tick.token,
       name: tick.name || tick.token,
@@ -104,11 +97,27 @@ export class WebSocketService {
   }
 
   /**
+   * Create IST timestamp (Indian Standard Time - UTC+5:30)
+   * UNIVERSAL: Works regardless of server timezone - always returns IST time
+   */
+  private createISTTimestamp(): Date {
+    // Get current UTC time
+    const now = new Date();
+    
+    // Convert to IST (UTC+5:30) regardless of server timezone
+    const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
+    const utcTime = now.getTime() + (now.getTimezoneOffset() * 60000); // Convert to UTC
+    const istTime = new Date(utcTime + istOffset); // Add IST offset
+    
+    return istTime;
+  }
+
+  /**
    * Update websocket last activity timestamp with IST
    */
   private async updateWebSocketActivity(websocketUuid: string): Promise<void> {
-    // Create IST timestamp
-    const istTime = new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000));
+    // Use proper IST timestamp regardless of server timezone
+    const istTime = this.createISTTimestamp();
     
     await this.websocketRepository.update(
       { uuid: websocketUuid },

@@ -10,7 +10,7 @@ import { CandleCacheController } from './controller/candle-cache.controller';
 import { InMemoryCandleController } from './controller/in-memory-candle.controller';
 import { InstrumentService } from './services/instrument.service';
 import { TimeIntervalService } from './services/time-interval.service';
-import { WebSocketService } from './services/websocket.service';
+import {WebSocketService} from './services/websocket.service';
 import { PythonWorkerSeederService } from './services/python-worker-seeder.service';
 import { DatabaseSeederService } from './services/database-seeder.service';
 import { InstrumentRepository } from './repositories/instrument.repository';
