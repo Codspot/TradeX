@@ -38,6 +38,8 @@ import { InMemoryCandleService } from './services/in-memory-candle.service';
 import { TemporaryCandle } from './entities/temporary-candle.entity';
 import { TemporaryCandleController } from './controller/temporary-candle.controller';
 import { TemporaryCandleService } from './services/temporary-candle.service';
+import { DemandZoneController } from './controller/demand-zone.controller';
+import { DemandZoneService } from './services/demand-zone.service';
 
 @Module({
   imports: [
@@ -52,8 +54,8 @@ import { TemporaryCandleService } from './services/temporary-candle.service';
       TemporaryCandle
     ]),
   ],
-  controllers: [InstrumentController, TimeIntervalController, HistoricalDataController, WebSocketController, PythonWorkerController, CandleCacheController, InMemoryCandleController, TemporaryCandleController],
-  providers: [InstrumentService, TimeIntervalService, WebSocketService, PythonWorkerSeederService, DatabaseSeederService, InstrumentRepository, CandleSeederService, CandlesService, InMemoryCandleService, TemporaryCandleService],
+  controllers: [InstrumentController, TimeIntervalController, HistoricalDataController, WebSocketController, PythonWorkerController, CandleCacheController, InMemoryCandleController, TemporaryCandleController, DemandZoneController],
+  providers: [InstrumentService, TimeIntervalService, WebSocketService, PythonWorkerSeederService, DatabaseSeederService, InstrumentRepository, CandleSeederService, CandlesService, InMemoryCandleService, TemporaryCandleService, DemandZoneService],
   exports: [CandlesService],
 })
 export class AppModule {}
