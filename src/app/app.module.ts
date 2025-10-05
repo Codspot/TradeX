@@ -40,8 +40,6 @@ import { TemporaryCandleService } from './services/temporary-candle.service';
 import { IntervalSeederService } from './services/interval-seeder.service';
 import { TimezoneUtilService } from './services/timezone-util.service';
 import { CandleSeederController } from './controller/candle-seeder.controller';
-import { DatabaseCleanupService } from './services/database-cleanup.service';
-import { DatabaseCleanupController } from './controller/database-cleanup.controller';
 
 @Module({
   imports: [
@@ -58,8 +56,8 @@ import { DatabaseCleanupController } from './controller/database-cleanup.control
       TemporaryCandle  // Still needed for TemporaryCandleService (mock data generation)
     ]),
   ],
-  controllers: [InstrumentController, TimeIntervalController, HistoricalDataController, WebSocketController, PythonWorkerController, CandleCacheController, InMemoryCandleController, TemporaryCandleController, CandleSeederController, DatabaseCleanupController],
-  providers: [InstrumentService, TimeIntervalService, WebSocketService, PythonWorkerSeederService, DatabaseSeederService, InstrumentRepository, CandleSeederService, CandlesService, InMemoryCandleService, TemporaryCandleService, IntervalSeederService, TimezoneUtilService, DatabaseCleanupService],
+  controllers: [InstrumentController, TimeIntervalController, HistoricalDataController, WebSocketController, PythonWorkerController, CandleCacheController, InMemoryCandleController, TemporaryCandleController, CandleSeederController],
+  providers: [InstrumentService, TimeIntervalService, WebSocketService, PythonWorkerSeederService, DatabaseSeederService, InstrumentRepository, CandleSeederService, CandlesService, InMemoryCandleService, TemporaryCandleService, IntervalSeederService, TimezoneUtilService],
   exports: [CandlesService],
 })
 export class AppModule {}
