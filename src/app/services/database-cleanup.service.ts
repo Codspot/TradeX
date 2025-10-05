@@ -157,10 +157,12 @@ export class DatabaseCleanupService implements OnModuleInit {
 
     for (const table of candleTables) {
       try {
-        const deleteResult = await table.repo.delete({});
-        const deletedCount = deleteResult.affected || 0;
-        totalDeleted += deletedCount;
-        this.logger.log(`   🗑️ Cleaned ${table.name} candles: ${deletedCount} rows`);
+        // Count records before clearing
+        const countBefore = await table.repo.count();
+        // Use clear() method to delete all records from the table
+        await table.repo.clear();
+        totalDeleted += countBefore;
+        this.logger.log(`   🗑️ Cleaned ${table.name} candles: ${countBefore} rows`);
       } catch (error) {
         this.logger.error(`   ❌ Error cleaning ${table.name} candles:`, error.message);
       }
@@ -178,8 +180,8 @@ export class DatabaseCleanupService implements OnModuleInit {
     let totalDeleted = 0;
 
     try {
-      const temporaryCandleResult = await this.temporaryCandleRepository.delete({});
-      const temporaryCandleCount = temporaryCandleResult.affected || 0;
+      const temporaryCandleCount = await this.temporaryCandleRepository.count();
+      await this.temporaryCandleRepository.clear();
       totalDeleted += temporaryCandleCount;
       this.logger.log(`   🗑️ Cleaned temporary candles: ${temporaryCandleCount} rows`);
     } catch (error) {
@@ -198,8 +200,8 @@ export class DatabaseCleanupService implements OnModuleInit {
     let totalDeleted = 0;
 
     try {
-      const deleteResult = await this.instrumentRepository.delete({});
-      totalDeleted = deleteResult.affected || 0;
+      totalDeleted = await this.instrumentRepository.count();
+      await this.instrumentRepository.clear();
       this.logger.log(`   🗑️ Cleaned instruments: ${totalDeleted} rows`);
     } catch (error) {
       this.logger.error('   ❌ Error cleaning instruments:', error.message);
@@ -217,8 +219,8 @@ export class DatabaseCleanupService implements OnModuleInit {
     let totalDeleted = 0;
 
     try {
-      const deleteResult = await this.websocketRepository.delete({});
-      totalDeleted = deleteResult.affected || 0;
+      totalDeleted = await this.websocketRepository.count();
+      await this.websocketRepository.clear();
       this.logger.log(`   🗑️ Cleaned websockets: ${totalDeleted} rows`);
     } catch (error) {
       this.logger.error('   ❌ Error cleaning websockets:', error.message);
@@ -236,8 +238,8 @@ export class DatabaseCleanupService implements OnModuleInit {
     let totalDeleted = 0;
 
     try {
-      const deleteResult = await this.timeIntervalRepository.delete({});
-      totalDeleted = deleteResult.affected || 0;
+      totalDeleted = await this.timeIntervalRepository.count();
+      await this.timeIntervalRepository.clear();
       this.logger.log(`   🗑️ Cleaned time intervals: ${totalDeleted} rows`);
     } catch (error) {
       this.logger.error('   ❌ Error cleaning time intervals:', error.message);
@@ -255,8 +257,8 @@ export class DatabaseCleanupService implements OnModuleInit {
     let totalDeleted = 0;
 
     try {
-      const deleteResult = await this.serverRepository.delete({});
-      totalDeleted = deleteResult.affected || 0;
+      totalDeleted = await this.serverRepository.count();
+      await this.serverRepository.clear();
       this.logger.log(`   🗑️ Cleaned servers: ${totalDeleted} rows`);
     } catch (error) {
       this.logger.error('   ❌ Error cleaning servers:', error.message);
