@@ -1,11 +1,15 @@
 import { Controller, Get, Post, Query, Logger, Body } from '@nestjs/common';
 import { InMemoryCandleService, InMemoryCandle } from '../services/in-memory-candle.service';
+import { TimezoneUtilService } from '../services/timezone-util.service';
 
 @Controller('in-memory-candles')
 export class InMemoryCandleController {
   private readonly logger = new Logger(InMemoryCandleController.name);
 
-  constructor(private readonly inMemoryCandleService: InMemoryCandleService) {}
+  constructor(
+    private readonly inMemoryCandleService: InMemoryCandleService,
+    private readonly timezoneUtil: TimezoneUtilService,
+  ) {}
 
   /**
    * Get cache statistics
@@ -15,7 +19,8 @@ export class InMemoryCandleController {
     return {
       success: true,
       data: this.inMemoryCandleService.getCacheStats(),
-      timestamp: new Date().toISOString(),
+      timestamp: this.timezoneUtil.getISTTimestampString(),
+      serverTime: this.timezoneUtil.getCurrentMarketTimeInfo(),
     };
   }
 
@@ -48,7 +53,7 @@ export class InMemoryCandleController {
         candles: filteredCandles.sort((a, b) => b.lastUpdated.getTime() - a.lastUpdated.getTime()),
       },
       filters: { token, interval },
-      timestamp: new Date().toISOString(),
+      timestamp: this.timezoneUtil.getISTTimestampString(),
     };
   }
 
@@ -93,7 +98,7 @@ export class InMemoryCandleController {
       },
       filters: { token, interval },
       note: "Only showing current/active candles (not completed ones)",
-      timestamp: new Date().toISOString(),
+      timestamp: this.timezoneUtil.getISTTimestampString(),
     };
   }
 
@@ -436,5 +441,139 @@ export class InMemoryCandleController {
     }
     
     return endTime;
+  }
+
+  /**
+   * Migrate all in-memory candles to historical tables
+   */
+  @Post('migrate-to-historical')
+  async migrateToHistoricalTables() {
+    this.logger.log('Manual migration to historical tables requested');
+    
+    try {
+      const result = await this.inMemoryCandleService.migrateToHistoricalTables();
+      
+      return {
+        success: true,
+        message: 'Migration to historical tables completed',
+        data: result,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Migration to historical tables failed:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Migrate only completed candles to historical tables and clean from memory
+   */
+  @Post('migrate-completed')
+  async migrateCompletedCandles() {
+    this.logger.log('Migration of completed candles requested');
+    
+    try {
+      const result = await this.inMemoryCandleService.migrateCompletedCandles();
+      
+      return {
+        success: true,
+        message: 'Completed candles migrated and cleaned from memory',
+        data: result,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Migration of completed candles failed:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Get historical candles from interval-specific tables
+   */
+  @Get('historical')
+  async getHistoricalCandles(
+    @Query('interval') interval: string,
+    @Query('token') exchangeToken?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('limit') limit?: string,
+  ) {
+    try {
+      if (!interval) {
+        return {
+          success: false,
+          error: 'Interval parameter is required',
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      const parsedStartDate = startDate ? new Date(startDate) : undefined;
+      const parsedEndDate = endDate ? new Date(endDate) : undefined;
+      const parsedLimit = limit ? parseInt(limit, 10) : 100;
+
+      const candles = await this.inMemoryCandleService.getHistoricalCandles(
+        interval,
+        exchangeToken,
+        parsedStartDate,
+        parsedEndDate,
+        parsedLimit
+      );
+
+      return {
+        success: true,
+        data: {
+          interval,
+          exchangeToken,
+          count: candles.length,
+          candles,
+        },
+        filters: {
+          interval,
+          exchangeToken,
+          startDate: parsedStartDate,
+          endDate: parsedEndDate,
+          limit: parsedLimit,
+        },
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Failed to fetch historical candles:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * Get statistics about historical tables
+   */
+  @Get('historical-stats')
+  async getHistoricalTableStats() {
+    try {
+      const stats = await this.inMemoryCandleService.getHistoricalTableStats();
+      
+      return {
+        success: true,
+        data: stats,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error('Failed to get historical table stats:', error);
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 }

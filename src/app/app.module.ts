@@ -33,11 +33,15 @@ import { Candles1m } from './entities/candles-1m.entity';
 import { Candles3m } from './entities/candles-3m.entity';
 import { Candles10m } from './entities/candles-10m.entity';
 import { Candles2h } from './entities/candles-2h.entity';
-import { Candles7d } from './entities/candles-7d.entity';
 import { InMemoryCandleService } from './services/in-memory-candle.service';
 import { TemporaryCandle } from './entities/temporary-candle.entity';
 import { TemporaryCandleController } from './controller/temporary-candle.controller';
 import { TemporaryCandleService } from './services/temporary-candle.service';
+import { IntervalSeederService } from './services/interval-seeder.service';
+import { TimezoneUtilService } from './services/timezone-util.service';
+import { CandleSeederController } from './controller/candle-seeder.controller';
+import { DatabaseCleanupService } from './services/database-cleanup.service';
+import { DatabaseCleanupController } from './controller/database-cleanup.controller';
 
 @Module({
   imports: [
@@ -48,12 +52,14 @@ import { TemporaryCandleService } from './services/temporary-candle.service';
     TypeOrmModule.forRootAsync(configurationDatabase),
     TypeOrmModule.forFeature([
       Server, WebSocket, Instrument, TimeIntervalEntity,
-      CandlesMonth, Candles1w, Candles1d, Candles7d, Candles4h, Candles2h, Candles1h, Candles30m, Candles15m, Candles10m, Candles5m, Candles3m, Candles1m,
-      TemporaryCandle
+      // Candle entities for all intervals: 1m, 3m, 5m, 10m, 15m, 30m, 1h, 2h, 4h, 1d, 7d(1w), 1M(month)
+      Candles1m, Candles3m, Candles5m, Candles10m, Candles15m, Candles30m, 
+      Candles1h, Candles2h, Candles4h, Candles1d, Candles1w, CandlesMonth,
+      TemporaryCandle  // Still needed for TemporaryCandleService (mock data generation)
     ]),
   ],
-  controllers: [InstrumentController, TimeIntervalController, HistoricalDataController, WebSocketController, PythonWorkerController, CandleCacheController, InMemoryCandleController, TemporaryCandleController],
-  providers: [InstrumentService, TimeIntervalService, WebSocketService, PythonWorkerSeederService, DatabaseSeederService, InstrumentRepository, CandleSeederService, CandlesService, InMemoryCandleService, TemporaryCandleService],
+  controllers: [InstrumentController, TimeIntervalController, HistoricalDataController, WebSocketController, PythonWorkerController, CandleCacheController, InMemoryCandleController, TemporaryCandleController, CandleSeederController, DatabaseCleanupController],
+  providers: [InstrumentService, TimeIntervalService, WebSocketService, PythonWorkerSeederService, DatabaseSeederService, InstrumentRepository, CandleSeederService, CandlesService, InMemoryCandleService, TemporaryCandleService, IntervalSeederService, TimezoneUtilService, DatabaseCleanupService],
   exports: [CandlesService],
 })
 export class AppModule {}

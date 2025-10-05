@@ -1,7 +1,19 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { TemporaryCandle } from '../entities/temporary-candle.entity';
+
+import { Candles1m } from '../entities/candles-1m.entity';
+import { Candles3m } from '../entities/candles-3m.entity';
+import { Candles5m } from '../entities/candles-5m.entity';
+import { Candles10m } from '../entities/candles-10m.entity';
+import { Candles15m } from '../entities/candles-15m.entity';
+import { Candles30m } from '../entities/candles-30m.entity';
+import { Candles1h } from '../entities/candles-1h.entity';
+import { Candles2h } from '../entities/candles-2h.entity';
+import { Candles4h } from '../entities/candles-4h.entity';
+import { Candles1d } from '../entities/candles-1d.entity';
+import { Candles1w } from '../entities/candles-1w.entity';
+import { CandlesMonth } from '../entities/candles-month.entity';
 
 export interface InMemoryCandle {
   exchangeToken: string;
@@ -26,10 +38,13 @@ export class InMemoryCandleService implements OnModuleInit {
   private candleCache = new Map<string, InMemoryCandle>();
   
   // Intervals to track - Updated with new requirements
-  private readonly intervals = ['1m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d', '7d', '1M'];
+  private readonly intervals = ['1m', '3m', '5m', '10m', '15m', '30m', '1h', '2h', '4h', '1d', '1w', '1M'];
   
   // Sync interval (every 30 seconds)
   private syncInterval: NodeJS.Timeout;
+  
+  // Track if pending candles have been stored for the current trading day
+  private pendingCandlesStoredToday = false;
 
   /**
    * Create IST timestamp (Indian Standard Time - UTC+5:30)
@@ -48,8 +63,30 @@ export class InMemoryCandleService implements OnModuleInit {
   }
 
   constructor(
-    @InjectRepository(TemporaryCandle)
-    private temporaryCandleRepository: Repository<TemporaryCandle>,
+    @InjectRepository(Candles1m)
+    private candles1mRepository: Repository<Candles1m>,
+    @InjectRepository(Candles3m)
+    private candles3mRepository: Repository<Candles3m>,
+    @InjectRepository(Candles5m)
+    private candles5mRepository: Repository<Candles5m>,
+    @InjectRepository(Candles10m)
+    private candles10mRepository: Repository<Candles10m>,
+    @InjectRepository(Candles15m)
+    private candles15mRepository: Repository<Candles15m>,
+    @InjectRepository(Candles30m)
+    private candles30mRepository: Repository<Candles30m>,
+    @InjectRepository(Candles1h)
+    private candles1hRepository: Repository<Candles1h>,
+    @InjectRepository(Candles2h)
+    private candles2hRepository: Repository<Candles2h>,
+    @InjectRepository(Candles4h)
+    private candles4hRepository: Repository<Candles4h>,
+    @InjectRepository(Candles1d)
+    private candles1dRepository: Repository<Candles1d>,
+    @InjectRepository(Candles1w)
+    private candles1wRepository: Repository<Candles1w>,
+    @InjectRepository(CandlesMonth)
+    private candlesMonthRepository: Repository<CandlesMonth>,
   ) {}
 
   onModuleInit() {
@@ -79,14 +116,14 @@ export class InMemoryCandleService implements OnModuleInit {
     // Check market status
     const marketStatus = this.getMarketStatus(tickTime);
     
-    // Log market status for debugging (only once per minute)
-    if (this.shouldLogMarketStatus(tickTime)) {
-      this.logger.log(`🕒 Market Status: ${marketStatus.status} - ${marketStatus.description}`);
+    // Store pending candles when market enters active trading (only once per day)
+    if (marketStatus.status === 'ACTIVE_TRADING' && !this.pendingCandlesStoredToday) {
+      await this.storePendingCompletedCandles();
+      this.pendingCandlesStoredToday = true;
     }
     
     // Reject ticks if market is completely closed
     if (!marketStatus.canProcessTicks) {
-      this.logger.debug(`❌ Rejecting tick for ${tick.token} - Market is ${marketStatus.status}`);
       return;
     }
     
@@ -102,22 +139,52 @@ export class InMemoryCandleService implements OnModuleInit {
       return;
     }
     
+    // CRITICAL FIX: Reset low prices to open when market opens at 9:15 AM
+    if (marketStatus.status === 'ACTIVE_TRADING') {
+      await this.resetLowPricesToOpenOnMarketOpen(tickTime);
+    }
+    
     // Normal processing for ACTIVE_TRADING and POST_MARKET
     await this.processNormalTick(tick, tickTime, marketStatus);
   }
 
-  private lastMarketStatusLog = 0;
-  
   /**
-   * Check if we should log market status (once per minute)
+   * CRITICAL FIX: Reset low prices to open when market opens at 9:15 AM
+   * This fixes the issue where 1-hour candles show pre-market lows instead of trading session lows
    */
-  private shouldLogMarketStatus(time: Date): boolean {
-    const currentMinute = Math.floor(time.getTime() / (60 * 1000));
-    if (currentMinute !== this.lastMarketStatusLog) {
-      this.lastMarketStatusLog = currentMinute;
-      return true;
+  private marketOpenLowResetDone = false; // Track if reset was done today
+  
+  private async resetLowPricesToOpenOnMarketOpen(tickTime: Date): Promise<void> {
+    // Only do this once at market open (9:15 AM)
+    const hour = tickTime.getHours();
+    const minute = tickTime.getMinutes();
+    const isMarketOpenTime = hour === 9 && minute === 15;
+    
+    // If it's exactly 9:15 and we haven't done the reset today
+    if (isMarketOpenTime && !this.marketOpenLowResetDone) {
+      let resetCount = 0;
+      
+      for (const [key, candle] of this.candleCache.entries()) {
+        // Only reset candles that were created during pre-market/price-discovery
+        // and have low values from pre-market period
+        if (candle.low < candle.open) {
+          candle.low = candle.open; // Reset low to opening price
+          candle.lastUpdated = this.createISTTimestamp();
+          resetCount++;
+        }
+      }
+      
+      this.marketOpenLowResetDone = true;
+      
+      if (resetCount > 0) {
+        this.logger.log(`🔥 MARKET OPEN FIX: Reset low prices to open for ${resetCount} candles at 9:15 AM (removed pre-market lows)`);
+      }
     }
-    return false;
+    
+    // Reset the flag at end of trading day for next day
+    if (hour >= 16) { // After 4 PM
+      this.marketOpenLowResetDone = false;
+    }
   }
 
   /**
@@ -130,8 +197,6 @@ export class InMemoryCandleService implements OnModuleInit {
     volume: number;
     timestamp: string | Date;
   }, tickTime: Date): Promise<void> {
-    this.logger.debug(`📈 PRE-MARKET: Updating open prices for ${tick.token} @ ₹${tick.ltp}`);
-    
     for (const interval of this.intervals) {
       const candleStart = this.getCandleStartTime(tickTime, interval);
       const key = `${tick.token}-${interval}-${candleStart.getTime()}`;
@@ -147,8 +212,6 @@ export class InMemoryCandleService implements OnModuleInit {
         candle.volume += tick.volume || 0;
         candle.tickCount++;
         candle.lastUpdated = this.createISTTimestamp();
-        
-        this.logger.debug(`🔄 PRE-MARKET UPDATE: ${interval} candle for ${tick.token} - Open updated to ₹${candle.open}`);
       } else {
         // Create new candle for pre-market
         candle = {
@@ -167,7 +230,6 @@ export class InMemoryCandleService implements OnModuleInit {
         };
         
         this.candleCache.set(key, candle);
-        this.logger.debug(`🆕 PRE-MARKET NEW: ${interval} candle for ${tick.token} - Open set to ₹${candle.open}`);
       }
     }
   }
@@ -182,8 +244,6 @@ export class InMemoryCandleService implements OnModuleInit {
     volume: number;
     timestamp: string | Date;
   }, tickTime: Date): Promise<void> {
-    this.logger.debug(`🔒 PRICE-DISCOVERY: Fixed open, updating H/L/C for ${tick.token} @ ₹${tick.ltp}`);
-    
     for (const interval of this.intervals) {
       const candleStart = this.getCandleStartTime(tickTime, interval);
       const key = `${tick.token}-${interval}-${candleStart.getTime()}`;
@@ -198,8 +258,6 @@ export class InMemoryCandleService implements OnModuleInit {
         candle.volume += tick.volume || 0;
         candle.tickCount++;
         candle.lastUpdated = this.createISTTimestamp();
-        
-        this.logger.debug(`🔒 PRICE-DISCOVERY UPDATE: ${interval} candle for ${tick.token} - Open FIXED at ₹${candle.open}, Close: ₹${candle.close}`);
       } else {
         // Create new candle for price discovery period (should rarely happen if pre-market worked)
         // Use tick price as open if no pre-market candle exists
@@ -219,7 +277,6 @@ export class InMemoryCandleService implements OnModuleInit {
         };
         
         this.candleCache.set(key, candle);
-        this.logger.debug(`🆕 PRICE-DISCOVERY NEW: ${interval} candle for ${tick.token} - Open set and FIXED at ₹${candle.open}`);
       }
     }
   }
@@ -250,27 +307,9 @@ export class InMemoryCandleService implements OnModuleInit {
         candle.tickCount++;
         candle.lastUpdated = this.createISTTimestamp();
         
-        // Special logging for debugging (1m and 10m intervals)
-        if (tick.token === '2885' && (interval === '1m' || interval === '10m')) {
-          console.log(`🔒 ${marketStatus.status} UPDATE - ${interval} candle for ${tick.name}:`);
-          console.log(`   Fixed Open: ${candle.open} (NEVER changes during trading)`);
-          console.log(`   Updated: H:${candle.high} L:${candle.low} C:${candle.close} (Tick: ${tick.ltp})`);
-          console.log(`   Volume: ${candle.volume}, Ticks: ${candle.tickCount}`);
-        }
       } else {
-        // Create new candle - Get proper open price using correct logic
-        let openPrice: number;
-        
-        // Try to get previous candle's close price for continuity
-        const previousClose = await this.getPreviousCandleClose(tick.token, interval, candleStart);
-        
-        if (previousClose !== null) {
-          // Use previous candle's close as open (standard behavior)
-          openPrice = previousClose;
-        } else {
-          // No previous candle found, use current tick price as open
-          openPrice = tick.ltp;
-        }
+        // Create new candle with first tick price as open
+        const openPrice = tick.ltp;
         
         candle = {
           exchangeToken: tick.token,
@@ -278,7 +317,7 @@ export class InMemoryCandleService implements OnModuleInit {
           name: tick.name || '',
           interval,
           datetime: candleStart,
-          open: openPrice, // 🔒 FIXED: Open price is set once and never changes during trading
+          open: openPrice,
           high: Math.max(openPrice, tick.ltp),
           low: Math.min(openPrice, tick.ltp),
           close: tick.ltp,
@@ -288,156 +327,93 @@ export class InMemoryCandleService implements OnModuleInit {
         };
         
         this.candleCache.set(key, candle);
-        
-        // Special logging for new candles (1m and 10m intervals)
-        if (tick.token === '2885' && (interval === '1m' || interval === '10m')) {
-          console.log(`🆕 NEW ${marketStatus.status} CANDLE - ${interval} for ${tick.name}:`);
-          console.log(`   Open: ${openPrice} (${previousClose ? 'from prev close' : 'from current tick'}) - FIXED during trading`);
-          console.log(`   OHLC: O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close}`);
-          
-          // Extra debugging for 10m interval
-          if (interval === '10m') {
-            console.log(`   🔍 10m DEBUG: CandleStart=${candleStart.toISOString()}, PrevClose=${previousClose}`);
-          }
-        }
       }
     }
   }
 
   /**
-   * Sync in-memory candles to database with proper rollover logic
+   * Sync in-memory candles to database - FIXED: Only store during active trading hours + safe cleanup
    */
   private async syncToDatabase(): Promise<void> {
     const candlesToSync = Array.from(this.candleCache.values());
     const now = this.createISTTimestamp();
+    const marketStatus = this.getMarketStatus(now);
+    
+    // Only store historical candles during ACTIVE_TRADING hours
+    const shouldStoreToDatabase = marketStatus.status === 'ACTIVE_TRADING';
     
     let completedCandles = 0;
-    let updatedCandles = 0;
+    let cleanedCandles = 0;
+    const candlesToRemove: string[] = [];
     
     for (const candle of candlesToSync) {
       const intervalEnd = this.getIntervalEnd(candle.datetime, candle.interval);
       const isCompleted = now >= intervalEnd;
       
       if (isCompleted) {
-        // Candle interval is complete - finalize and move to historical
-        await this.finalizeCompletedCandle(candle);
-        
-        // Remove from cache after finalizing
-        const key = `${candle.exchangeToken}-${candle.interval}-${candle.datetime.getTime()}`;
-        this.candleCache.delete(key);
-        
-        // Create next interval candle with proper open price (previous close)
-        await this.createNextIntervalCandle(candle, intervalEnd);
-        
         completedCandles++;
-      } else {
-        // Active candle - just sync to temp storage
-        await this.upsertToDatabase(candle);
-        updatedCandles++;
+        
+        // Store to database ONLY during active trading hours
+        if (shouldStoreToDatabase) {
+          try {
+            await this.saveToHistoricalTable(candle);
+            
+            // Only mark for removal AFTER successful database save
+            const key = `${candle.exchangeToken}-${candle.interval}-${candle.datetime.getTime()}`;
+            candlesToRemove.push(key);
+            
+          } catch (error) {
+            this.logger.error(`Failed to save candle to database: ${candle.exchangeToken}-${candle.interval}`, error);
+            // Don't remove from cache if database save failed
+          }
+        } else {
+          // During non-active hours, keep completed candles in memory
+          // They will be stored when market opens or during next active period
+          this.logger.debug(`Keeping completed candle in memory (market status: ${marketStatus.status}): ${candle.exchangeToken}-${candle.interval}`);
+        }
       }
+      // Active candles always stay in memory until complete
     }
     
-    if (completedCandles > 0 || updatedCandles > 0) {
-      this.logger.debug(`Completed: ${completedCandles}, Updated: ${updatedCandles}, Cache: ${this.candleCache.size}`);
+    // Safe cleanup: Only remove candles that were successfully saved
+    for (const key of candlesToRemove) {
+      this.candleCache.delete(key);
+      cleanedCandles++;
+    }
+    
+    if (completedCandles > 0) {
+      this.logger.debug(`Sync summary - Market: ${marketStatus.status}, Completed: ${completedCandles}, Stored: ${shouldStoreToDatabase ? cleanedCandles : 0}, Kept in memory: ${completedCandles - cleanedCandles}`);
     }
   }
 
   /**
-   * Finalize a completed candle (simplified - focus on in-memory correctness)
+   * Finalize a completed candle - Save directly to historical table only
    */
   private async finalizeCompletedCandle(candle: InMemoryCandle): Promise<void> {
     try {
-      // For now, just log the completion and save to temporary table
-      // TODO: Later implement historical table saving
-      await this.upsertToDatabase(candle);
-      
-      this.logger.log(`✅ COMPLETED ${candle.interval} candle for ${candle.symbol} (${candle.exchangeToken}): O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume} Ticks:${candle.tickCount}`);
+      // Save directly to appropriate historical interval table
+      // No need for temporary table - in-memory cache serves as temporary storage
+      await this.saveToHistoricalTable(candle);
     } catch (error) {
       this.logger.error(`Error finalizing candle:`, error);
     }
   }
 
   /**
-   * Create next interval candle with proper open price continuity
+   * Create next interval candle with NEW open price logic
    */
   private async createNextIntervalCandle(completedCandle: InMemoryCandle, nextIntervalStart: Date): Promise<void> {
-    // Create the next interval candle with the completed candle's close as the open price
-    // This ensures proper price continuity between candles
     const nextKey = `${completedCandle.exchangeToken}-${completedCandle.interval}-${nextIntervalStart.getTime()}`;
     
     // Check if next candle already exists (might have been created by tick processing)
     if (this.candleCache.has(nextKey)) {
-      this.logger.debug(`Next candle already exists for ${completedCandle.symbol} ${completedCandle.interval}`);
       return;
     }
     
-    // Create next candle with proper open price (previous close)
-    const nextCandle: InMemoryCandle = {
-      exchangeToken: completedCandle.exchangeToken,
-      symbol: completedCandle.symbol,
-      name: completedCandle.name,
-      interval: completedCandle.interval,
-      datetime: nextIntervalStart,
-      open: completedCandle.close, // 🔒 FIXED: Next candle's open = previous candle's close
-      high: completedCandle.close, // Initially set to open price
-      low: completedCandle.close,  // Initially set to open price
-      close: completedCandle.close, // Initially set to open price
-      volume: 0,
-      tickCount: 0,
-      lastUpdated: this.createISTTimestamp(),
-    };
-    
-    this.candleCache.set(nextKey, nextCandle);
-    
-    this.logger.debug(`🔗 Created next ${completedCandle.interval} candle for ${completedCandle.symbol}: Open=${nextCandle.open} (from prev close)`);
+    // Don't create next candle automatically - let first tick create it with fresh open price
   }
 
-  /**
-   * Upsert candle to database
-   */
-  private async upsertToDatabase(candle: InMemoryCandle): Promise<void> {
-    try {
-      const existing = await this.temporaryCandleRepository.findOne({
-        where: {
-          exchangeToken: candle.exchangeToken,
-          interval: candle.interval,
-          datetime: candle.datetime,
-        },
-      });
 
-      if (existing) {
-        // Update existing
-        await this.temporaryCandleRepository.update(
-          { uuid: existing.uuid },
-          {
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-            volume: candle.volume,
-            updatedAt: this.createISTTimestamp(),
-          }
-        );
-      } else {
-        // Create new
-        const newCandle = this.temporaryCandleRepository.create({
-          exchangeToken: candle.exchangeToken,
-          symbol: candle.symbol,
-          name: candle.name,
-          interval: candle.interval,
-          datetime: candle.datetime,
-          open: candle.open,
-          high: candle.high,
-          low: candle.low,
-          close: candle.close,
-          volume: candle.volume,
-          isTemporary: true,
-        });
-        await this.temporaryCandleRepository.save(newCandle);
-      }
-    } catch (error) {
-      this.logger.error(`Error upserting candle to database:`, error);
-    }
-  }
 
   /**
    * Get candle start time for interval (properly aligned to IST market hours)
@@ -490,8 +466,8 @@ export class InMemoryCandleService implements OnModuleInit {
         // Set to start of the trading day (00:00:00 IST)
         d.setHours(0, 0, 0, 0);
         break;
-      case '7d':
-        // Set to previous Monday at 00:00:00 IST (7-day period)
+      case '1w':
+        // Set to previous Monday at 00:00:00 IST (weekly period)
         d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
         d.setHours(0, 0, 0, 0);
         break;
@@ -524,7 +500,7 @@ export class InMemoryCandleService implements OnModuleInit {
       case '2h': endTime.setHours(endTime.getHours() + 2); break;
       case '4h': endTime.setHours(endTime.getHours() + 4); break;
       case '1d': endTime.setDate(endTime.getDate() + 1); break;
-      case '7d': endTime.setDate(endTime.getDate() + 7); break;
+      case '1w': endTime.setDate(endTime.getDate() + 7); break;
       case '1M': endTime.setMonth(endTime.getMonth() + 1); break;
       default: endTime.setMinutes(endTime.getMinutes() + 1);
     }
@@ -599,14 +575,237 @@ export class InMemoryCandleService implements OnModuleInit {
   }
 
   /**
-   * Save completed candle to appropriate historical table (DISABLED FOR NOW)
+   * Get the appropriate repository based on interval
+   */
+  private getRepositoryForInterval(interval: string): Repository<any> | null {
+    const repositoryMap = {
+      '1m': this.candles1mRepository,
+      '3m': this.candles3mRepository,
+      '5m': this.candles5mRepository,
+      '10m': this.candles10mRepository,
+      '15m': this.candles15mRepository,
+      '30m': this.candles30mRepository,
+      '1h': this.candles1hRepository,
+      '2h': this.candles2hRepository,
+      '4h': this.candles4hRepository,
+      '1d': this.candles1dRepository,
+      '1w': this.candles1wRepository, // 1w maps to weekly table
+      '1M': this.candlesMonthRepository,
+    };
+    
+    return repositoryMap[interval] || null;
+  }
+
+  /**
+   * Save completed candle to appropriate historical table
    */
   private async saveToHistoricalTable(candle: InMemoryCandle): Promise<void> {
-    // TEMPORARILY DISABLED - Focus on in-memory correctness first
-    this.logger.debug(`📝 Would save to historical table: candles_${candle.interval} (DISABLED)`);
+    try {
+      const repository = this.getRepositoryForInterval(candle.interval);
+      
+      if (!repository) {
+        this.logger.warn(`No repository found for interval: ${candle.interval}`);
+        return;
+      }
+
+      // Check if candle already exists in historical table
+      const existingCandle = await repository.findOne({
+        where: {
+          exchange_token: candle.exchangeToken,
+          date: candle.datetime,
+        },
+      });
+
+      if (existingCandle) {
+        // Update existing historical candle
+        await repository.update(
+          { uuid: existingCandle.uuid },
+          {
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            volume: candle.volume,
+            updatedAt: this.createISTTimestamp(),
+          }
+        );
+      } else {
+        // Create new historical candle
+        const historicalCandle = repository.create({
+          symbol: candle.symbol,
+          name: candle.name,
+          exchange_token: candle.exchangeToken,
+          date: candle.datetime,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+        });
+        
+        await repository.save(historicalCandle);
+      }
+    } catch (error) {
+      this.logger.error(`Error saving candle to historical table (${candle.interval}):`, error);
+    }
+  }
+
+  /**
+   * Migrate all in-memory candles to their respective historical interval tables
+   */
+  async migrateToHistoricalTables(): Promise<{
+    totalProcessed: number;
+    successCount: number;
+    errorCount: number;
+    intervalBreakdown: Record<string, { success: number; errors: number }>;
+  }> {
+    const allCandles = Array.from(this.candleCache.values());
+    let totalProcessed = 0;
+    let successCount = 0;
+    let errorCount = 0;
+    const intervalBreakdown: Record<string, { success: number; errors: number }> = {};
     
-    // TODO: Later implement actual historical table saving
-    // Example: await this.candles5mRepository.save(historicalCandle);
+    for (const candle of allCandles) {
+      totalProcessed++;
+      
+      // Initialize interval stats if needed
+      if (!intervalBreakdown[candle.interval]) {
+        intervalBreakdown[candle.interval] = { success: 0, errors: 0 };
+      }
+      
+      try {
+        await this.saveToHistoricalTable(candle);
+        successCount++;
+        intervalBreakdown[candle.interval].success++;
+      } catch (error) {
+        errorCount++;
+        intervalBreakdown[candle.interval].errors++;
+        this.logger.error(`Error migrating candle ${candle.exchangeToken}-${candle.interval}:`, error);
+      }
+    }
+    
+    return {
+      totalProcessed,
+      successCount,
+      errorCount,
+      intervalBreakdown,
+    };
+  }
+
+  /**
+   * Migrate completed candles to historical tables and clean from memory
+   */
+  async migrateCompletedCandles(): Promise<{
+    migratedCount: number;
+    remainingCount: number;
+    intervalBreakdown: Record<string, number>;
+  }> {
+    const now = this.createISTTimestamp();
+    const allCandles = Array.from(this.candleCache.entries());
+    let migratedCount = 0;
+    const intervalBreakdown: Record<string, number> = {};
+    
+    for (const [key, candle] of allCandles) {
+      const intervalEnd = this.getIntervalEnd(candle.datetime, candle.interval);
+      const isCompleted = now >= intervalEnd;
+      
+      if (isCompleted) {
+        try {
+          // Save to historical table
+          await this.saveToHistoricalTable(candle);
+          
+          // Remove from memory cache
+          this.candleCache.delete(key);
+          
+          migratedCount++;
+          intervalBreakdown[candle.interval] = (intervalBreakdown[candle.interval] || 0) + 1;
+        } catch (error) {
+          this.logger.error(`Error migrating completed candle ${key}:`, error);
+        }
+      }
+    }
+    
+    return {
+      migratedCount,
+      remainingCount: this.candleCache.size,
+      intervalBreakdown,
+    };
+  }
+
+  /**
+   * Get candles from historical table for a specific interval
+   */
+  async getHistoricalCandles(
+    interval: string,
+    exchangeToken?: string,
+    startDate?: Date,
+    endDate?: Date,
+    limit: number = 100
+  ): Promise<any[]> {
+    try {
+      const repository = this.getRepositoryForInterval(interval);
+      
+      if (!repository) {
+        throw new Error(`No repository found for interval: ${interval}`);
+      }
+      
+      const queryBuilder = repository.createQueryBuilder('candle');
+      
+      if (exchangeToken) {
+        queryBuilder.where('candle.exchange_token = :exchangeToken', { exchangeToken });
+      }
+      
+      if (startDate) {
+        queryBuilder.andWhere('candle.date >= :startDate', { startDate });
+      }
+      
+      if (endDate) {
+        queryBuilder.andWhere('candle.date <= :endDate', { endDate });
+      }
+      
+      return await queryBuilder
+        .orderBy('candle.date', 'DESC')
+        .limit(limit)
+        .getMany();
+        
+    } catch (error) {
+      this.logger.error(`Error fetching historical candles for ${interval}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Get statistics about historical tables
+   */
+  async getHistoricalTableStats(): Promise<Record<string, { count: number; latestDate: Date | null; oldestDate: Date | null }>> {
+    const stats: Record<string, { count: number; latestDate: Date | null; oldestDate: Date | null }> = {};
+    
+    for (const interval of this.intervals) {
+      const repository = this.getRepositoryForInterval(interval);
+      
+      if (repository) {
+        try {
+          const count = await repository.count();
+          const latest = await repository.findOne({
+            order: { date: 'DESC' }
+          });
+          const oldest = await repository.findOne({
+            order: { date: 'ASC' }
+          });
+          
+          stats[interval] = {
+            count,
+            latestDate: latest?.date || null,
+            oldestDate: oldest?.date || null,
+          };
+        } catch (error) {
+          this.logger.error(`Error getting stats for ${interval}:`, error);
+          stats[interval] = { count: 0, latestDate: null, oldestDate: null };
+        }
+      }
+    }
+    
+    return stats;
   }
 
   /**
@@ -646,14 +845,13 @@ export class InMemoryCandleService implements OnModuleInit {
   }
 
   /**
-   * Force sync all candles to database (for testing/debugging)
+   * Force sync all candles to historical tables (for testing/debugging)
    */
   async forceSyncAll(): Promise<void> {
     const candlesToSync = Array.from(this.candleCache.values());
     for (const candle of candlesToSync) {
-      await this.upsertToDatabase(candle);
+      await this.saveToHistoricalTable(candle);
     }
-    this.logger.log(`Force synced ${candlesToSync.length} candles to database`);
   }
 
   /**
@@ -662,7 +860,7 @@ export class InMemoryCandleService implements OnModuleInit {
   clearCache(): { clearedCount: number; message: string } {
     const clearedCount = this.candleCache.size;
     this.candleCache.clear();
-    this.logger.warn(`🗑️ CLEARED ALL IN-MEMORY CANDLES: ${clearedCount} candles removed`);
+
     
     return {
       clearedCount,
@@ -717,15 +915,19 @@ export class InMemoryCandleService implements OnModuleInit {
       return prevCandle.close;
     }
     
-    // Then check database (temporary_candles table)
+    // Then check historical tables for previous candle
     try {
-      const prevCandleDb = await this.temporaryCandleRepository.findOne({
+      const repository = this.getRepositoryForInterval(interval);
+      if (!repository) {
+        return null;
+      }
+
+      const prevCandleDb = await repository.findOne({
         where: {
-          exchangeToken: token,
-          interval: interval,
-          datetime: prevCandleStart,
+          exchange_token: token,
+          date: prevCandleStart,
         },
-        order: { datetime: 'DESC' },
+        order: { date: 'DESC' },
       });
       
       return prevCandleDb ? Number(prevCandleDb.close) : null;
@@ -858,24 +1060,65 @@ export class InMemoryCandleService implements OnModuleInit {
    */
   async initializeDailyMarket(): Promise<void> {
     const now = this.createISTTimestamp();
-    this.logger.log(`🏪 DAILY MARKET INITIALIZATION - ${now.toDateString()}`);
-    
-    // Get market status
     const marketStatus = this.getMarketStatus(now);
     
     if (marketStatus.status === 'PRE_MARKET') {
-      this.logger.log(`📅 Pre-market period active - Ready for open price adjustments`);
-      
-      // Log statistics for yesterday's candles before cleanup
-      const stats = this.getCacheStats();
-      this.logger.log(`📊 Previous day candles in memory: ${stats.totalCandles}`);
-      
-      // Optionally: Clear very old candles or completed candles from previous days
+      // Clean up previous day candles and reset daily flags
       await this.cleanupPreviousDayCandles();
+      this.pendingCandlesStoredToday = false;
+    } else if (marketStatus.status === 'ACTIVE_TRADING') {
+      // When market opens for active trading, store any pending completed candles
+      await this.storePendingCompletedCandles();
+      this.pendingCandlesStoredToday = true;
+    }
+  }
+
+  /**
+   * Store any completed candles that were kept in memory during non-active hours
+   * FIXED: Only store candles created during or after 9:15 AM (ACTIVE_TRADING)
+   */
+  private async storePendingCompletedCandles(): Promise<void> {
+    const candlesToCheck = Array.from(this.candleCache.values());
+    const now = this.createISTTimestamp();
+    let storedCount = 0;
+    let rejectedCount = 0;
+    
+    for (const candle of candlesToCheck) {
+      const intervalEnd = this.getIntervalEnd(candle.datetime, candle.interval);
+      const isCompleted = now >= intervalEnd;
       
-      this.logger.log(`✅ Daily market initialization complete - Ready for trading`);
-    } else {
-      this.logger.warn(`⚠️ Daily initialization called outside pre-market hours: ${marketStatus.status}`);
+      if (isCompleted && candle.datetime < now) {
+        // CRITICAL FIX: Only store candles created during or after active trading hours
+        const candleHour = candle.datetime.getHours();
+        const candleMinute = candle.datetime.getMinutes();
+        const candleTimeInMinutes = candleHour * 60 + candleMinute;
+        const activeStart = 9 * 60 + 15; // 9:15 AM in minutes from midnight
+        
+        if (candleTimeInMinutes >= activeStart) {
+          // This candle was created during or after 9:15 AM - store it
+          try {
+            await this.saveToHistoricalTable(candle);
+            
+            // Remove from cache after successful save
+            const key = `${candle.exchangeToken}-${candle.interval}-${candle.datetime.getTime()}`;
+            this.candleCache.delete(key);
+            storedCount++;
+            
+          } catch (error) {
+            this.logger.error(`Failed to store pending candle: ${candle.exchangeToken}-${candle.interval}`, error);
+          }
+        } else {
+          // This candle was created before 9:15 AM (pre-market/price discovery) - reject and remove
+          const key = `${candle.exchangeToken}-${candle.interval}-${candle.datetime.getTime()}`;
+          this.candleCache.delete(key);
+          rejectedCount++;
+          this.logger.debug(`🚫 Rejected pre-market candle: ${candle.exchangeToken}-${candle.interval} at ${candle.datetime.toISOString()}`);
+        }
+      }
+    }
+    
+    if (storedCount > 0 || rejectedCount > 0) {
+      this.logger.log(`📊 Processed pending candles: ${storedCount} stored, ${rejectedCount} rejected (pre-market)`);
     }
   }
 
@@ -904,8 +1147,6 @@ export class InMemoryCandleService implements OnModuleInit {
       cleanedCount++;
     }
     
-    if (cleanedCount > 0) {
-      this.logger.log(`🗑️ Cleaned up ${cleanedCount} candles from previous trading days`);
-    }
+
   }
 }

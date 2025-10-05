@@ -8,7 +8,7 @@ import { TimeIntervalEntity } from 'src/app/entities/market-data-interval.entity
 import { CandlesMonth } from 'src/app/entities/candles-month.entity';
 import { Candles1w } from 'src/app/entities/candles-1w.entity';
 import { Candles1d } from 'src/app/entities/candles-1d.entity';
-import { Candles7d } from 'src/app/entities/candles-7d.entity';
+
 import { Candles4h } from 'src/app/entities/candles-4h.entity';
 import { Candles2h } from 'src/app/entities/candles-2h.entity';
 import { Candles1h } from 'src/app/entities/candles-1h.entity';
@@ -45,7 +45,6 @@ export const configurationDatabase: TypeOrmModuleAsyncOptions = {
       Candles2h,
       Candles4h,
       Candles1d,
-      Candles7d,
       Candles1w,
       CandlesMonth,
       TemporaryCandle
