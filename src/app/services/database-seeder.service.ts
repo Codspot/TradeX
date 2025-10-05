@@ -174,7 +174,7 @@ export class DatabaseSeederService implements OnModuleInit {
         isActive: true,
       },
       {
-        interval: TimeInterval.ONE_WEEK,
+        interval: TimeInterval.SEVEN_DAYS,
         name: '1 Week',
         description: 'Weekly timeframe for long-term trends',
         durationMinutes: 10080,
