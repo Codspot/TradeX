@@ -27,18 +27,24 @@ export class HistoricalDataController {
         return this.candlesService.getDailyCandles(exchange_token, fromDate, toDate);
       case '4h':
         return this.candlesService.get4hCandles(exchange_token, fromDate, toDate);
+      case '2h':
+        return this.candlesService.get2hCandles(exchange_token, fromDate, toDate);
       case '1h':
         return this.candlesService.get1hCandles(exchange_token, fromDate, toDate);
       case '30m':
         return this.candlesService.get30mCandles(exchange_token, fromDate, toDate);
       case '15m':
         return this.candlesService.get15mCandles(exchange_token, fromDate, toDate);
+      case '10m':
+        return this.candlesService.get10mCandles(exchange_token, fromDate, toDate);
       case '5m':
         return this.candlesService.get5mCandles(exchange_token, fromDate, toDate);
+      case '3m':
+        return this.candlesService.get3mCandles(exchange_token, fromDate, toDate);
       case '1m':
         return this.candlesService.get1mCandles(exchange_token, fromDate, toDate);
       default:
-        return { error: 'Unsupported interval. Supported: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1M/month.' };
+        return { error: 'Unsupported interval. Supported: 1m, 3m, 5m, 10m, 15m, 30m, 1h, 2h, 4h, 1d, 1w, 1M/month.' };
     }
   }
 }

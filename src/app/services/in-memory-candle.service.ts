@@ -626,7 +626,7 @@ export class InMemoryCandleService implements OnModuleInit {
             low: candle.low,
             close: candle.close,
             volume: candle.volume,
-            updatedAt: this.createISTTimestamp(),
+            updated_at: this.createISTTimestamp(),
           }
         );
       } else {
@@ -1075,50 +1075,33 @@ export class InMemoryCandleService implements OnModuleInit {
 
   /**
    * Store any completed candles that were kept in memory during non-active hours
-   * FIXED: Only store candles created during or after 9:15 AM (ACTIVE_TRADING)
    */
   private async storePendingCompletedCandles(): Promise<void> {
     const candlesToCheck = Array.from(this.candleCache.values());
     const now = this.createISTTimestamp();
     let storedCount = 0;
-    let rejectedCount = 0;
     
     for (const candle of candlesToCheck) {
       const intervalEnd = this.getIntervalEnd(candle.datetime, candle.interval);
       const isCompleted = now >= intervalEnd;
       
       if (isCompleted && candle.datetime < now) {
-        // CRITICAL FIX: Only store candles created during or after active trading hours
-        const candleHour = candle.datetime.getHours();
-        const candleMinute = candle.datetime.getMinutes();
-        const candleTimeInMinutes = candleHour * 60 + candleMinute;
-        const activeStart = 9 * 60 + 15; // 9:15 AM in minutes from midnight
-        
-        if (candleTimeInMinutes >= activeStart) {
-          // This candle was created during or after 9:15 AM - store it
-          try {
-            await this.saveToHistoricalTable(candle);
-            
-            // Remove from cache after successful save
-            const key = `${candle.exchangeToken}-${candle.interval}-${candle.datetime.getTime()}`;
-            this.candleCache.delete(key);
-            storedCount++;
-            
-          } catch (error) {
-            this.logger.error(`Failed to store pending candle: ${candle.exchangeToken}-${candle.interval}`, error);
-          }
-        } else {
-          // This candle was created before 9:15 AM (pre-market/price discovery) - reject and remove
+        try {
+          await this.saveToHistoricalTable(candle);
+          
+          // Remove from cache after successful save
           const key = `${candle.exchangeToken}-${candle.interval}-${candle.datetime.getTime()}`;
           this.candleCache.delete(key);
-          rejectedCount++;
-          this.logger.debug(`🚫 Rejected pre-market candle: ${candle.exchangeToken}-${candle.interval} at ${candle.datetime.toISOString()}`);
+          storedCount++;
+          
+        } catch (error) {
+          this.logger.error(`Failed to store pending candle: ${candle.exchangeToken}-${candle.interval}`, error);
         }
       }
     }
     
-    if (storedCount > 0 || rejectedCount > 0) {
-      this.logger.log(`📊 Processed pending candles: ${storedCount} stored, ${rejectedCount} rejected (pre-market)`);
+    if (storedCount > 0) {
+      this.logger.log(`📊 Stored ${storedCount} pending completed candles to database (market opened for active trading)`);
     }
   }
 
