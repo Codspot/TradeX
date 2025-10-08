@@ -626,7 +626,7 @@ export class InMemoryCandleService implements OnModuleInit {
             low: candle.low,
             close: candle.close,
             volume: candle.volume,
-            updated_at: this.createISTTimestamp(),
+            updatedAt: this.createISTTimestamp(),
           }
         );
       } else {
